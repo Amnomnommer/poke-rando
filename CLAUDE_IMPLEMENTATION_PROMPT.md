@@ -22,14 +22,14 @@ The current sprint is Phase 0 expanded-engine stability. Do not begin randomizer
 
 ## Current state
 
-- Working package version: `0.1.0-alpha.0873`.
+- Last known package version: `0.1.0-alpha.0873`; its implementation source is unavailable.
 - Target: White 2 `IRDO`.
 - Pinned W2U commit: `9489aebf42a870fa6a60816c273b0aa22fe5c1fe`.
 - `.0872` repaired ARM9 boot metadata and removed W2U’s development-only forced-Continue DLL.
 - `.0872` booted, battled, saved, reloaded, and displayed trainer Carbink correctly.
 - `.0872` also produced a level-100 Route 19 expanded encounter, corrupt capture text, malformed Pokédex lists, and eventual ARM9 abort `0x0203A086` during Pokédex use.
-- `.0873` replaces the ambiguous fixture with Patrat #504 level 5, Carbink #703 level 6, and Chespin #650 level 7 across all seasonal Route 19 grass tables.
-- `.0873` structurally decodes and verifies all 48 modified slots and exact record size.
+- The lost `.0873` implementation was designed to replace the ambiguous fixture with Patrat #504 level 5, Carbink #703 level 6, and Chespin #650 level 7 across all seasonal Route 19 grass tables.
+- Surviving test output reported that `.0873` structurally decoded and verified all 48 modified slots and exact record size; recovery must reproduce this independently.
 - At handoff, the clean `.0873` build was running and runtime results were not yet available.
 - Full starter/wild/trainer/item randomization is not implemented.
 - W2U ordinary species data currently stops at #1023 because internal IDs #1024/#1025 are egg records. This conflicts with the #001–#1025 core requirement and remains an architecture decision. Do not silently redefine the requirement or mark it complete.
@@ -45,7 +45,7 @@ The current sprint is Phase 0 expanded-engine stability. Do not begin randomizer
 7. Do not require ROM bytes in cloud tests and do not upload proprietary assets.
 8. Stop and return the required change report before attempting encounter or Pokédex runtime repairs.
 
-If `.0873` runtime results are not available, stop runtime repair work after the inventory and baseline. You may implement noninvasive improvements to build provenance, cache validation, manifests, or test ergonomics, but do not guess at the encounter or Pokédex fix.
+Runtime results for the lost `.0873` build are unavailable. Stop before encounter or Pokédex runtime repair after completing the bounded reconstruction assignment. Do not guess at those fixes.
 
 ## Engineering constraints
 
