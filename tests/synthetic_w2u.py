@@ -137,6 +137,9 @@ def make_checkout(root: Path) -> dict:
     write(root, "tools/mkdata/enum/moves.toml", tomlw.dumps({"DEFINE": {k: v[0] for k, v in MOVES.items()}}))
     write(root, "tools/mkdata/enum/items.toml", tomlw.dumps({"DEFINE": ITEMS}))
     write(root, "tools/mkdata/enum/evolution_methods.toml", tomlw.dumps({"DEFINE": {m: i for i, m in enumerate(METHODS)}}))
+    write(root, "tools/mkdata/enum/btl_abil.toml", tomlw.dumps({"DEFINE": {"BATTLE_ABILITY_RANDOM": 0, "BATTLE_ABILITY_PRIMARY": 1,
+                                                                    "BATTLE_ABILITY_SECONDARY": 2, "BATTLE_ABILITY_HIDDEN": 3}}))
+    write(root, "tools/mkdata/enum/btl_gender.toml", tomlw.dumps({"DEFINE": {"GENDER_RANDOM": 0, "GENDER_MALE": 1, "GENDER_FEMALE": 2}}))
     write(root, "tools/mkdata/enum/types.toml", tomlw.dumps({"DEFINE": {"TYPE_NORMAL": 0, "TYPE_FIRE": 1, "TYPE_WATER": 2}}))
     types = ["TYPE_NORMAL", "TYPE_FIRE", "TYPE_WATER"]
     personal_list, learn_list, evo_list = [], [], []
@@ -210,8 +213,8 @@ def make_checkout(root: Path) -> dict:
         write(root, f"data/encounters/{index}.toml", tomlw.dumps(document))
     write(root, "data/encounters/meson.build", "encounters = [\n" + "".join(f"  '{i}.toml',\n" for i in records) + "]\n")
 
-    def member(label, level, moves=False):
-        m = {"SPECIES": label, "LEVEL": level, "FORM": 0, "GENDER": 0, "ABILITY": 0, "DIFFICULTY_VALUE": 50}
+    def member(label, level, moves=False, ability=0, gender=0):
+        m = {"SPECIES": label, "LEVEL": level, "FORM": 0, "GENDER": gender, "ABILITY": ability, "DIFFICULTY_VALUE": 50}
         if moves:
             m["MOVES"] = ["MOVE_TACKLE", "MOVE_NONE", "MOVE_NONE", "MOVE_NONE"]
         return m
@@ -227,7 +230,8 @@ def make_checkout(root: Path) -> dict:
         3: trainer(3, [member("SPECIES_100", 14), member("SPECIES_103", 16)]),  # Leader
         4: trainer(3, [member("SPECIES_200", 30)]),  # Leader with one Pokémon (padded to two)
         5: trainer(4, [member("SPECIES_205", 50), member("SPECIES_206", 50)]),  # Elite Four
-        6: trainer(1, [member("SPECIES_41", 12, True), member("SPECIES_44", 13, True)]),
+        6: trainer(1, [member("SPECIES_41", 12, True, "BATTLE_ABILITY_PRIMARY", "GENDER_FEMALE"),
+                       member("SPECIES_44", 13, True, "BATTLE_ABILITY_HIDDEN", "GENDER_MALE")]),  # W2U symbolic forms
         7: trainer(5, [member("SPECIES_208", 60), member("SPECIES_202", 60)]),  # Champion
     }
     for index, document in trainers.items():

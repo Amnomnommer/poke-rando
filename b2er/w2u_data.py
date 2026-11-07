@@ -23,6 +23,8 @@ ENUMS = {
     "items": "tools/mkdata/enum/items.toml",
     "evolution_methods": "tools/mkdata/enum/evolution_methods.toml",
     "types": "tools/mkdata/enum/types.toml",
+    "btl_abil": "tools/mkdata/enum/btl_abil.toml",
+    "btl_gender": "tools/mkdata/enum/btl_gender.toml",
 }
 PML_MESON = "data/pml/meson.build"
 MOVES_MESON = "data/pml/moves/meson.build"
@@ -119,6 +121,10 @@ class W2UData:
             if "DEFINE" not in doc:
                 raise DataError(f"{rel} has no DEFINE table")
             enums[key] = {str(k): int(v) for k, v in doc["DEFINE"].items()}
+        from .gamedata.trainer_codec import check_w2u_enums
+        enum_problems = check_w2u_enums(enums)
+        if enum_problems:
+            raise DataError("; ".join(enum_problems))
         model = SpeciesModel.from_enum(enums["species"])
         species_by_label = enums["species"]
 

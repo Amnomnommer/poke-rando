@@ -6,6 +6,7 @@ import copy
 
 from ...model import (BattleFormat, EncounterArea, EncounterTable, Evolution, EvolutionMethod, GameModel, Move,
                       PartyMember, SpeciesData, SpeciesKey, Slot, Trainer, TrainerRole)
+from ...gamedata import trainer_codec
 from ...w2u_data import Evolution as W2UEvolution, W2UData
 from .common import (FEASIBLE, LEVEL_PARAMETER_METHODS, METHOD_TO_MODEL, TABLE_KINDS, TABLE_RATES,
                      WHITE2_EVOLUTION_ITEMS, w2u_codec)
@@ -93,20 +94,22 @@ def to_model(data: W2UData, game_id: str) -> GameModel:
     trainers = []
     for index in sorted(data.trainers):
         document = data.trainers[index]
-        class_name = data.trainer_classes.get(int(document["CLASS"]), "")
+        header = trainer_codec.trainer_header(index, document)
+        class_name = data.trainer_classes.get(header["CLASS"], "")
         name = data.trainer_names.get(index, "")
         role = ROLE_BY_CLASS.get(class_name) or ROLE_BY_NAME.get(name, TrainerRole.ORDINARY)
         party = []
-        for m in document.get("PARTY", []):
-            key = species_key(data, m["SPECIES"], int(m["FORM"]))
+        for slot, m in enumerate(document.get("PARTY", [])):
+            core = trainer_codec.member_core(index, slot, m)
+            key = species_key(data, m["SPECIES"], core["FORM"])
             if key is None:
                 continue
             moves_list = [mv for mv in m["MOVES"] if mv != "MOVE_NONE"] if "MOVES" in m else None
             ext = {k: v for k, v in m.items() if k not in ("SPECIES", "LEVEL", "FORM", "MOVES")}
-            party.append(PartyMember(key, int(m["LEVEL"]), moves_list, ext))
+            party.append(PartyMember(key, core["LEVEL"], moves_list, ext))
         ext = {k: v for k, v in document.items() if k != "PARTY"}
         ext["uses_moves"] = any("MOVES" in m for m in document.get("PARTY", []))
-        trainers.append(Trainer(index, name, class_name, role, FORMATS[int(document["BATTLE_TYPE"])], party, ext))
+        trainers.append(Trainer(index, name, class_name, role, FORMATS[header["BATTLE_TYPE"]], party, ext))
     return GameModel(game_id, data.codec, species, moves, encounters, trainers, starters=[],
                      obtainable_evolution_items=WHITE2_EVOLUTION_ITEMS, feasible_evolution_methods=FEASIBLE,
                      ext={"label_mismatches": data.label_mismatches})

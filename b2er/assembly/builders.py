@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 
 from ..gamedata import encounters as enc
+from ..gamedata import trainer_codec
 from ..gamedata import trainers as trn
 from ..nds.narc import Narc
 from ..nds.rom import Rom, build_rom
@@ -85,7 +86,7 @@ class MockBuilder:
         files["a/1/2/7"] = Narc([encode_encounter_document(data, data.encounters[i]) for i in sorted(data.encounters)]).build()
         trdata, trpoke = [], []
         for index in sorted(data.trainers):
-            d, p = encode_trainer_document(data, data.trainers[index])
+            d, p = encode_trainer_document(data, data.trainers[index], index)
             trdata.append(d)
             trpoke.append(p)
         files["a/0/9/1"] = Narc(trdata).build()
@@ -133,22 +134,13 @@ def _label(data: W2UData, kind: str, value) -> int:
     return value if isinstance(value, int) else data.enums[kind][value]
 
 
-def encode_trainer_document(data: W2UData, document: dict) -> tuple[bytes, bytes]:
-    party = document.get("PARTY", [])
-    has_moves = any("MOVES" in m for m in party)
-    has_item = any("HELD_ITEM" in m for m in party)
-    fmt = (trn.FORMAT_HELD_ITEM if has_item else 0) | (trn.FORMAT_MOVES if has_moves else 0)
-    tr = trn.TrainerData(fmt, int(document["CLASS"]), int(document["BATTLE_TYPE"]), len(party),
-                         tuple(_label(data, "items", i) for i in document["ITEMS"]), int(document["AI"]),
-                         int(document["CAN_HEAL"]), int(document["REWARD_MONEY"]), _label(data, "items", document["REWARD_ITEM"]))
-    poke = bytearray()
-    for m in party:
-        poke += bytes([int(m["DIFFICULTY_VALUE"]), (int(m["ABILITY"]) << 4) | (int(m["GENDER"]) & 0xF)])
-        poke += int(m["LEVEL"]).to_bytes(2, "little") + data.species_id(m["SPECIES"]).to_bytes(2, "little")
-        poke += int(m["FORM"]).to_bytes(2, "little")
-        if has_item:
-            poke += _label(data, "items", m.get("HELD_ITEM", "ITEM_NONE")).to_bytes(2, "little")
-        if has_moves:
-            for move in m.get("MOVES", ["MOVE_NONE"] * 4):
-                poke += _label(data, "moves", move).to_bytes(2, "little")
-    return trn.encode_trdata(tr), bytes(poke)
+def trainer_labels(data: W2UData) -> trainer_codec.Labels:
+    return trainer_codec.Labels(data.enums, data.species_id)
+
+
+def encode_trainer_document(data: W2UData, document: dict, trainer_id="?") -> tuple[bytes, bytes]:
+    """W2U trainer TOML -> (trdata, trpoke) through the shared typed codec; schema errors become BuildError."""
+    try:
+        return trainer_codec.encode_bytes(trainer_id, document, trainer_labels(data))
+    except trainer_codec.TrainerFieldError as error:
+        raise BuildError(f"invalid trainer source: {error}") from None
