@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import capabilities as caps, identify
+from . import capabilities as caps, coverage, identify
 from .adapters import BuildContext, default_registry
 from .assembly import BuildError, reports, workroot
 from .randomizer import policy, settings as settings_mod
@@ -70,6 +70,9 @@ def load_settings(req: BuildRequest) -> dict:
 def run(req: BuildRequest) -> dict:
     started = time.monotonic()
     registry = default_registry()
+    claim_problems = coverage.audit(registry)
+    if claim_problems:
+        raise BuildError("coverage registry claims are not backed by adapter capabilities: " + "; ".join(claim_problems))
     problems: list[str] = []
     if not req.seed:
         problems.append("--seed must be a non-empty string")
@@ -83,8 +86,11 @@ def run(req: BuildRequest) -> dict:
         identity = identify.identify(req.rom, adapters=registry, pins=pins_inputs)
     except OSError as error:
         raise BuildError(f"cannot read ROM: {error}") from None
-    if identity.status != identify.CLEAN_KNOWN or identity.adapter is None:
-        raise BuildError(f"ROM not buildable: status={identity.status}; " + "; ".join(identity.diagnostics or ["no adapter"]))
+    support = (identity.release or {}).get("support_status", "unknown")
+    if identity.status != identify.CLEAN_KNOWN or identity.adapter is None or \
+            not caps.SupportStatus(support).at_least(caps.SupportStatus.BUILDABLE):
+        raise BuildError(f"ROM not buildable: status={identity.status}, support={support}; "
+                         + "; ".join(identity.diagnostics or ["the identified release is recognized only"]))
     adapter = registry.get(identity.adapter)
     aux_identities = {}
     for name, description in adapter.auxiliary_inputs.items():
@@ -152,7 +158,9 @@ def run(req: BuildRequest) -> dict:
             "schema_version": 2,
             "tool": {"name": "b2er", "version": TOOL_VERSION, "dependencies": adapter.tool_versions(ctx)},
             "identity": {k: v for k, v in identity.to_json().items() if k not in ("diagnostics",)},
-            "adapter": {"id": adapter.id, "version": adapter.version, "species_codec": planned.codec.describe()},
+            "adapter": {"id": adapter.id, "version": adapter.version, "family": getattr(adapter, "family_id", None),
+                        "species_codec": planned.codec.describe()},
+            "support_status": identity.release["support_status"],
             "build_key": build_key,
             "seed": req.seed,
             "settings": settings,

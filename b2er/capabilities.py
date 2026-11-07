@@ -28,9 +28,38 @@ class Capability(str, Enum):
 
 
 class Level(str, Enum):
-    SUPPORTED = "supported"  # implemented and verified structurally/semantically
-    EXPERIMENTAL = "experimental"  # implemented; output marked experimental in the manifest
-    UNSUPPORTED = "unsupported"
+    """Per-capability implementation level (never a claim of game support; see SupportStatus)."""
+
+    SUPPORTED = "implemented"  # implemented and verified structurally/semantically
+    EXPERIMENTAL = "partial"  # implemented with documented gaps; marked in the manifest
+    UNSUPPORTED = "unavailable"
+
+
+class SupportStatus(str, Enum):
+    """Game/release support ladder. Each rung requires all lower rungs."""
+
+    UNKNOWN = "unknown"
+    RECOGNIZED = "recognized"  # identified; nothing is built
+    BUILDABLE = "buildable"  # adapter can safely unpack, rebuild, and verify
+    FEATURE_COMPLETE = "feature-complete"  # every required transformation implemented
+    RUNTIME_VALIDATED = "runtime-validated"  # required gameplay tests passed
+    PLAYTHROUGH_VALIDATED = "playthrough-validated"  # a complete playthrough passed
+
+    @property
+    def rank(self) -> int:
+        return list(SupportStatus).index(self)
+
+    def at_least(self, other: "SupportStatus") -> bool:
+        return self.rank >= other.rank
+
+
+# Every capability a release must implement before it may be called feature-complete.
+FEATURE_COMPLETE_REQUIRES = (
+    "repacking", "species_expansion", "starter_randomization", "wild_randomization", "trainer_randomization",
+    "gift_randomization", "static_randomization", "field_item_randomization", "hidden_item_randomization",
+    "shop_item_randomization", "evolution_normalization", "progression_analysis", "major_battle_doubles",
+    "pokedex_expansion", "save_format_expansion", "deterministic_verification",
+)
 
 
 @dataclass(frozen=True)
@@ -60,7 +89,7 @@ def check(declared: dict[Capability, Support], requested: dict[Capability, dict 
     for capability, needs in requested.items():
         support = declared.get(capability, unsupported("not declared by the adapter"))
         if support.level == Level.UNSUPPORTED:
-            problems.append(f"{capability.value}: unsupported ({support.evidence})")
+            problems.append(f"{capability.value}: unavailable ({support.evidence})")
             continue
         if needs and support.limit:
             for key, wanted in needs.items():

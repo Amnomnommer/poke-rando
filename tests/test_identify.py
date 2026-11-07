@@ -30,9 +30,10 @@ def gba(code: bytes, title: bytes = b"SYNTH", revision: int = 0) -> bytes:
     return bytes(h) + bytes(0x1000)
 
 
-def gb(title: bytes, cgb: bool = False) -> bytes:
+def gb(title: bytes, cgb: bool = False, destination: int = 0) -> bytes:
     h = bytearray(0x8000)
     h[0x134:0x134 + len(title)] = title
+    h[0x14A] = destination
     if cgb:
         h[0x143] = 0x80
     checksum = 0
@@ -88,7 +89,8 @@ class IdentifyTests(unittest.TestCase):
         r = self.ident(bytes(data)).to_json()
         self.assertEqual(r["status"], "recognized_modified")
         self.assertEqual(r["adapter_confidence"], "header-only")
-        self.assertTrue(any("not an approved clean revision" in d for d in r["diagnostics"]))
+        self.assertTrue(any("not the approved clean release" in d for d in r["diagnostics"]))
+        self.assertEqual(r["support_status"], "recognized")
 
     def test_hash_matching_with_wrong_header_is_refused(self) -> None:
         other = build_rom(game_code=b"IRDJ", arm9=arm9.synthetic_arm9(), files={"x": b"y"})  # Japanese White 2 header
@@ -99,21 +101,27 @@ class IdentifyTests(unittest.TestCase):
     def test_other_regions_and_generations(self) -> None:
         cases = [
             (build_rom(game_code=b"IRDJ", arm9=arm9.synthetic_arm9(), files={"x": b"y"}), "gen5-white2", "Japan", "recognized_modified"),
-            (build_rom(game_code=b"CPUE", arm9=arm9.synthetic_arm9(), files={"x": b"y"}), "gen4-platinum", "USA", "recognized_unsupported"),
-            (build_rom(game_code=b"IRBO", arm9=arm9.synthetic_arm9(), files={"x": b"y"}), "gen5-black", "USA/Europe", "recognized_unsupported"),
-            (gba(b"BPEE"), "gen3-emerald", "USA", "recognized_unsupported"),
-            (gba(b"BPRD"), "gen3-firered", "Germany", "recognized_unsupported"),
-            (gb(b"POKEMON RED"), "gen1-red", None, "recognized_unsupported"),
-            (gb(b"PM_CRYSTAL", cgb=True), "gen2-crystal", None, "recognized_unsupported"),
-            (three_ds(b"CTR-P-EKJA"), "gen6-x", "All regions", "recognized_unsupported"),
-            (three_ds(b"CTR-P-A2BA"), "gen7-ultra-moon", "All regions", "recognized_unsupported"),
+            (build_rom(game_code=b"CPUE", arm9=arm9.synthetic_arm9(), files={"x": b"y"}), "gen4-platinum", "USA", "recognized_unverified"),
+            (build_rom(game_code=b"IRBO", arm9=arm9.synthetic_arm9(), files={"x": b"y"}), "gen5-black", "USA/Europe", "recognized_unverified"),
+            (gba(b"BPEE"), "gen3-emerald", "USA", "recognized_unverified"),
+            (gba(b"BPRD"), "gen3-firered", "Germany", "recognized_unverified"),
+            (gb(b"POKEMON RED"), "gen1-red", "Japan", "recognized_unverified"),
+            (gb(b"PM_CRYSTAL", cgb=True, destination=1), "gen2-crystal", "Overseas", "recognized_unverified"),
+            (three_ds(b"CTR-P-EKJA"), "gen6-x", "All regions", "recognized_unverified"),
+            (three_ds(b"CTR-P-A2BA"), "gen7-ultra-moon", "All regions", "recognized_unverified"),
         ]
         for data, fp, region, status in cases:
             with self.subTest(fp=fp):
                 r = self.ident(data).to_json()
                 self.assertEqual((r["fingerprint"], r["region"], r["status"]), (fp, region, status))
-                if status == "recognized_unsupported":
-                    self.assertIsNone(r["adapter"])
+                # Recognized titles get their family's recognition-only adapter; never more than "recognized".
+                self.assertEqual(r["support_status"], "recognized")
+                if status == "recognized_unverified":
+                    self.assertTrue(r["adapter"].endswith(fp), r["adapter"])
+                    adapter = default_registry().get(r["adapter"])
+                    levels = {c.value: s.level.value for c, s in adapter.capabilities().items()}
+                    self.assertEqual(levels.pop("rom_recognition"), "implemented")
+                    self.assertEqual(set(levels.values()), {"unavailable"})
 
     def test_unknown_and_non_pokemon(self) -> None:
         self.assertEqual(self.ident(b"\x00" * 4096).status, "unknown")
@@ -155,7 +163,34 @@ class IdentifyTests(unittest.TestCase):
             self.assertTrue(set(adapter.fingerprints) <= ids, adapter.id)
         with self.assertRaises(ValueError):
             AdapterRegistry([Black2Adapter(), Black2Adapter()])
-        self.assertEqual(default_registry().for_fingerprint("gen4-platinum"), None)
+        platinum = default_registry().for_fingerprint("gen4-platinum")
+        self.assertEqual((platinum.id, platinum.family_id), ("nds-gen4.gen4-platinum", "nds-gen4"))
+        self.assertIsNone(default_registry().for_fingerprint("gen3-colosseum"))  # not a required mainline title
+
+    def test_required_coverage_is_complete(self) -> None:
+        required = {"Red", "Green", "Blue", "Yellow", "Gold", "Silver", "Crystal", "Ruby", "Sapphire", "Emerald", "FireRed",
+                    "LeafGreen", "Diamond", "Pearl", "Platinum", "HeartGold", "SoulSilver", "Black", "White", "Black 2",
+                    "White 2", "X", "Y", "Omega Ruby", "Alpha Sapphire", "Sun", "Moon", "Ultra Sun", "Ultra Moon"}
+        titles = [t for t in identify.load_fingerprints()["titles"] if t["required"]]
+        self.assertEqual({t["version"] for t in titles}, required)
+        registry = default_registry()
+        families = {"gb": {1, 2}, "gba": {3}, "nds-gen4": {4}, "nds-gen5": {5}, "ctr-gen6": {6}, "ctr-gen7": {7}}
+        for t in titles:
+            self.assertIn(t["generation"], families[t["family"]], t["id"])
+            self.assertIsNotNone(registry.for_fingerprint(t["id"]), t["id"])
+
+    def test_support_ladder_claims_are_evidence_bound(self) -> None:
+        from b2er import coverage
+        from b2er.capabilities import SupportStatus
+        data = coverage.load()
+        matrix = coverage.matrix(identify.load_fingerprints(), default_registry(), data)
+        buildable = [t["fingerprint"] for fam in matrix.values() for t in fam["titles"]
+                     if SupportStatus(t["title_status"]).at_least(SupportStatus.BUILDABLE)]
+        self.assertEqual(buildable, ["gen5-white2"])  # only the pinned, end-to-end-tested release
+        for release in data["pinned_releases"]:
+            self.assertTrue(release["evidence"] and release["approved_input"])
+            self.assertFalse(SupportStatus(release["status"]).at_least(SupportStatus.FEATURE_COMPLETE),
+                             "no release may claim feature-complete before every required capability is implemented")
 
 
 if __name__ == "__main__":

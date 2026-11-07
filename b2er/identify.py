@@ -26,9 +26,10 @@ DEFAULT_PINS = PACKAGE.parent / "pins" / "inputs.json"
 
 CLEAN_KNOWN = "clean_known"
 RECOGNIZED_MODIFIED = "recognized_modified"
-RECOGNIZED_UNSUPPORTED = "recognized_unsupported"
+RECOGNIZED_UNVERIFIED = "recognized_unverified"  # header recognized; no approved clean release matched
+VALIDATE_LIMIT = 256 << 20  # whole-image adapter validation for images up to this size
 UNKNOWN = "unknown"
-READ_LIMIT = 0x8000  # header probes never need more than this
+READ_LIMIT = 0x10000  # header probes never need more than this (CIA content headers sit past 0x2A00)
 
 
 @dataclass
@@ -41,6 +42,7 @@ class Header:
     revision: int | None = None
     integrity: dict = field(default_factory=dict)
     evidence: list[str] = field(default_factory=list)
+    region: dict | None = None  # platforms without a region letter (GB/GBC destination byte)
 
 
 @dataclass
@@ -53,6 +55,7 @@ class Identity:
     region: dict | None = None
     adapter: str | None = None
     adapter_confidence: str | None = None
+    release: dict | None = None
     evidence: list[str] = field(default_factory=list)
     diagnostics: list[str] = field(default_factory=list)
 
@@ -80,6 +83,8 @@ class Identity:
             "languages": (self.region or {}).get("languages", []),
             "adapter": self.adapter,
             "adapter_confidence": self.adapter_confidence,
+            "release": self.release,
+            "support_status": (self.release or {}).get("support_status", "unknown" if self.status == UNKNOWN else "recognized"),
             "evidence": self.evidence,
             "diagnostics": self.diagnostics,
         }
@@ -140,21 +145,40 @@ def probe_gb(head: bytes, size: int) -> Header | None:
     cgb = head[0x143] in (0x80, 0xC0)
     title_end = 0x13F if cgb else 0x144
     code = _ascii(head[0x13F:0x143]) if cgb and all(65 <= b <= 90 for b in head[0x13F:0x143]) else None
+    destination = {"region": "Japan", "languages": ["ja"]} if head[0x14A] == 0 else {"region": "Overseas", "languages": []}
     return Header("gb", "Game Boy Color cartridge image" if cgb else "Game Boy cartridge image", code,
                   _ascii(head[0x134:title_end]), None, head[0x14C], {"header_checksum": True},
-                  ["GB header checksum valid"])
+                  ["GB header checksum valid", f"destination byte: {destination['region']}"], destination)
+
+
+def _ncch_header(head: bytes, offset: int, container: str, evidence: list[str]) -> Header:
+    product = None
+    encrypted = None
+    if offset + 0x190 <= len(head) and head[offset + 0x100 : offset + 0x104] == b"NCCH":
+        product = _ascii(head[offset + 0x150 : offset + 0x160])
+        encrypted = not bool(head[offset + 0x18F] & 0x04)
+        revision = struct.unpack_from("<H", head, offset + 0x112)[0]
+    else:
+        revision = None
+    code = product.split("-")[-1] if product and product.count("-") == 2 else None
+    evidence = evidence + ([f"NCCH product code {product}", "NCCH contents encrypted" if encrypted else "NCCH contents decrypted"]
+                           if product else ["NCCH header unreadable (encrypted container or truncated)"])
+    return Header("3ds", container, code, product, None, revision, {"ncch_encrypted": encrypted}, evidence)
 
 
 def probe_3ds(head: bytes, size: int) -> Header | None:
     if len(head) < 0x200 or head[0x100:0x104] != b"NCSD":
         return None
-    part0_offset = struct.unpack_from("<I", head, 0x120)[0] * 0x200
-    product = None
-    if part0_offset + 0x160 <= len(head) and head[part0_offset + 0x100 : part0_offset + 0x104] == b"NCCH":
-        product = _ascii(head[part0_offset + 0x150 : part0_offset + 0x160])
-    code = product.split("-")[-1] if product and product.count("-") == 2 else None
-    return Header("3ds", "Nintendo 3DS card image (NCSD)", code, product, None, None, {},
-                  ["NCSD magic", f"NCCH product code {product}" if product else "NCCH product code unreadable"])
+    return _ncch_header(head, struct.unpack_from("<I", head, 0x120)[0] * 0x200, "Nintendo 3DS card image (NCSD)", ["NCSD magic"])
+
+
+def probe_cia(head: bytes, size: int) -> Header | None:
+    if len(head) < 0x20 or struct.unpack_from("<I", head, 0)[0] != 0x2020:
+        return None
+    cert, ticket, tmd = struct.unpack_from("<III", head, 0x08)
+    align = lambda n: (n + 63) // 64 * 64  # noqa: E731
+    offset = align(0x2020) + align(cert) + align(ticket) + align(tmd)
+    return _ncch_header(head + b"", offset, "Nintendo 3DS installable archive (CIA)", ["CIA header size 0x2020"])
 
 
 def probe_gamecube(head: bytes, size: int) -> Header | None:
@@ -172,7 +196,7 @@ def probe_switch(head: bytes, size: int) -> Header | None:
     return None
 
 
-PROBES = (probe_nds, probe_3ds, probe_gba, probe_gamecube, probe_switch, probe_gb)
+PROBES = (probe_nds, probe_3ds, probe_cia, probe_gba, probe_gamecube, probe_switch, probe_gb)
 
 
 # --- fingerprints -----------------------------------------------------------------
@@ -201,7 +225,7 @@ def match_title(header: Header, fingerprints: dict) -> tuple[dict | None, dict |
             region = fingerprints["regions"].get(header.game_code[3:4])
             return t, region
         if "title_prefix" in t and header.title and header.title.startswith(t["title_prefix"]):
-            return t, None
+            return t, header.region
     return None, None
 
 
@@ -210,10 +234,13 @@ def identify(path: Path, *, adapters=None, pins: Path = DEFAULT_PINS, fingerprin
     digest = hashlib.sha256()
     head = b""
     size = 0
+    whole = bytearray()
     with open(path, "rb") as handle:
         while chunk := handle.read(1 << 20):
             if len(head) < READ_LIMIT:
                 head += chunk[: READ_LIMIT - len(head)]
+            if size + len(chunk) <= VALIDATE_LIMIT:
+                whole += chunk
             digest.update(chunk)
             size += len(chunk)
     sha = digest.hexdigest()
@@ -236,11 +263,17 @@ def identify(path: Path, *, adapters=None, pins: Path = DEFAULT_PINS, fingerprin
     identity.fingerprint, identity.region = fp, region
     identity.evidence.append(f"header matches fingerprint {fp['id']}")
     approved = load_approved(pins)
-    exact = None
-    for entry in approved.values():
-        if entry["sha256"] == sha:
-            exact = entry
+    exact = next((e for e in approved.values() if e["sha256"] == sha), None)
     adapter = adapters.for_fingerprint(fp["id"]) if adapters else None
+    release = {"game_code": header.game_code, "revision": header.revision, "region": (region or {}).get("region"),
+               "languages": (region or {}).get("languages", []), "pinned_release": None, "support_status": "recognized"}
+    identity.release = release
+    if adapter is not None:
+        problems = adapter.validate(bytes(whole)) if size <= VALIDATE_LIMIT else ["image too large for whole-image validation"]
+        if problems:
+            identity.diagnostics += [f"adapter validation: {p}" for p in problems]
+        else:
+            identity.evidence.append(f"adapter {adapter.id} structural validation passed")
     if exact is not None:
         if fp.get("approved_input") != exact["id"] or header.game_code != exact["game_code"]:
             identity.status = RECOGNIZED_MODIFIED
@@ -248,17 +281,20 @@ def identify(path: Path, *, adapters=None, pins: Path = DEFAULT_PINS, fingerprin
             return identity
         identity.evidence.append(f"SHA-256 equals the approved clean {exact['id']} ({exact['game_code']})")
         identity.status = CLEAN_KNOWN
-    elif adapter is not None and fp.get("approved_input"):
+        from . import coverage
+        pinned = coverage.pinned_release(fp["id"], header.game_code, exact["id"])
+        if pinned:
+            release.update({"pinned_release": pinned["id"], "support_status": pinned["status"]})
+    elif fp.get("approved_input"):
         identity.status = RECOGNIZED_MODIFIED
-        identity.diagnostics.append(f"header identifies {fp['title']}, but the SHA-256 is not an approved clean revision "
-                                    "(modified, trimmed, patched, or another revision); it will not be built")
+        identity.diagnostics.append(f"header identifies {fp['title']} ({header.game_code}, revision {header.revision}), but the "
+                                    "SHA-256 is not the approved clean release (modified, trimmed, patched, another region, "
+                                    "language, or revision); it will not be built")
     else:
-        identity.status = RECOGNIZED_UNSUPPORTED
-    if adapter is None:
-        identity.diagnostics.append(f"{fp['title']} (Generation {fp['generation']}) is recognized but has no adapter yet")
-        if identity.status == CLEAN_KNOWN:
-            identity.status = RECOGNIZED_UNSUPPORTED
-        return identity
-    identity.adapter = adapter.id
-    identity.adapter_confidence = "exact-hash" if identity.status == CLEAN_KNOWN else "header-only"
+        identity.status = RECOGNIZED_UNVERIFIED
+        identity.diagnostics.append(f"{fp['title']} ({header.game_code or header.title}, revision {header.revision}) is "
+                                    "recognized; no approved clean release is pinned for it yet, so it cannot be built")
+    if adapter is not None:
+        identity.adapter = adapter.id
+        identity.adapter_confidence = "exact-hash" if identity.status == CLEAN_KNOWN else "header-only"
     return identity

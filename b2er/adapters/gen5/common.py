@@ -59,3 +59,8 @@ def w2u_codec(defines: dict[str, int]) -> SpeciesCodec:
 
 class Gen5Adapter(GameAdapter):
     generation = 5
+    family_id = "nds-gen5"
+
+    def validate(self, data: bytes) -> list[str]:
+        from ...families.nds_gen4 import validate as nds_validate  # shared DS container validation
+        return nds_validate(data)

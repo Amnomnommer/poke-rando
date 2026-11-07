@@ -46,6 +46,10 @@ class GameAdapter(ABC):
     def capabilities(self) -> dict[Capability, Support]:
         """Static capability declaration with evidence."""
 
+    def validate(self, data: bytes) -> list[str]:
+        """Adapter/family-specific structural validation of a whole image (read-only). Return problems."""
+        return []
+
     def preflight(self, ctx_inputs: dict) -> list[str]:
         """Adapter-specific prerequisites (dependencies, auxiliary inputs). Return every problem."""
         return []

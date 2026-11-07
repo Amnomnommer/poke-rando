@@ -26,12 +26,13 @@ The first integrated, locally buildable candidate is here. It is **structurally 
 
 ```sh
 ./b2er.sh identify /path/to/rom              # any ROM: identity, generation, adapter, evidence
-./b2er.sh capabilities                        # what each adapter supports
+./b2er.sh capabilities                        # per family/title/release status and capability levels
 ./Build-Alpha-0.1.sh --white2 /path/to/cleanwhite2.nds --black2 /path/to/cleanblack2.nds \
                      --w2u /path/to/W2U-Project --seed "example-seed" --species-max 1023
 ./Launch-Alpha-0.1.sh Alpha-0.1-builds/<label>.nds [--smoke 90 | --gdb]
 ```
 
+- [`docs/coverage.md`](docs/coverage.md): all 29 required games, engine families, and the recognized → playthrough-validated status ladder.
 - [`docs/architecture.md`](docs/architecture.md): identification, adapters, normalized model, capabilities, pipeline.
 - [`docs/alpha-0.1.md`](docs/alpha-0.1.md): prerequisites, build steps, outputs, launcher, first-play checklist.
 - [`docs/randomizer.md`](docs/randomizer.md): features, guarantees, known defects.

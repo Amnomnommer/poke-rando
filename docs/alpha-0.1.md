@@ -79,7 +79,7 @@ What the command does, in order:
 | File | Content |
 | --- | --- |
 | `<label>.nds` | the ROM (local only; never commit or share) |
-| `<label>.manifest.json` | detected identity, adapter and version, species codec, seed, settings, tool/dependency versions, provenance, capabilities used (supported/experimental), unsupported capabilities, transformations, output SHA-256, verification states, warnings |
+| `<label>.manifest.json` | detected identity, adapter and version, species codec, seed, settings, tool/dependency versions, provenance, release support status, capabilities used (implemented/partial), unavailable capabilities, transformations, output SHA-256, verification states, warnings |
 | `<label>.plan.json` | machine-readable randomization plan, including script patches |
 | `<label>.spoiler.txt` | human-readable spoiler log |
 | `<label>.settings.json` | normalized settings |

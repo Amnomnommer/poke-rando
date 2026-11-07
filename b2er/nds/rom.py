@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import struct
 from dataclasses import dataclass
@@ -307,6 +308,7 @@ def _build_fnt(paths: list[str]) -> tuple[bytes, list[str]]:
 LOGO_CRC = 0xCF56
 
 
+@functools.lru_cache(maxsize=1)
 def synthetic_logo_region() -> bytes:
     """156 filler bytes whose CRC-16 is the cartridge logo CRC, without containing the logo itself."""
     prefix = bytes(154)

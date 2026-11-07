@@ -137,7 +137,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(list((self.tmp / "work").iterdir()), [])
 
     def test_unsupported_feature_refused(self) -> None:
-        self.assertRefused("hidden_item_randomization: unsupported",
+        self.assertRefused("hidden_item_randomization: unavailable",
                            settings_override={"items": {"hidden": "shuffle"}})
 
     def test_dynamic_capability_refusal(self) -> None:
@@ -149,7 +149,7 @@ class PipelineTests(unittest.TestCase):
         req = self.request(rom=bare, pins_dir=pins)
         with self.assertRaises(BuildError) as ctx:
             pipeline.run(req)
-        self.assertIn("starter_randomization: unsupported", str(ctx.exception))
+        self.assertIn("starter_randomization: unavailable", str(ctx.exception))
         self.assertFalse(req.output_dir.exists())
         for path in (self.tmp / "work").iterdir():
             workroot.remove(path, self.tmp / "work")
@@ -160,7 +160,7 @@ class PipelineTests(unittest.TestCase):
         data[-1] ^= 0xFF
         modified.write_bytes(bytes(data))
         self.assertRefused("recognized_modified", rom=modified)
-        self.assertRefused("repacking: unsupported", rom=self.black)  # recognized; adapter declares recognition only
+        self.assertRefused("support=recognized", rom=self.black)  # clean and recognized, but its release is not buildable
         junk = self.tmp / "junk.bin"
         junk.write_bytes(b"\x00" * 4096)
         self.assertRefused("status=unknown", rom=junk)
@@ -220,7 +220,11 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(out.returncode, 1)
         self.assertIn("unknown", out.stdout)
         out = subprocess.run(cli + ["capabilities", "--json"], capture_output=True, text=True)
-        self.assertEqual(json.loads(out.stdout)["gen5.white2"]["capabilities"]["wild_randomization"]["level"], "supported")
+        matrix = json.loads(out.stdout)
+        white2 = next(t for t in matrix["nds-gen5"]["titles"] if t["fingerprint"] == "gen5-white2")
+        self.assertEqual(white2["capabilities"]["wild_randomization"]["level"], "implemented")
+        self.assertEqual(white2["title_status"], "buildable")
+        self.assertEqual(report["support_status"], "buildable")
 
 
 class WorkrootAndReportTests(unittest.TestCase):

@@ -18,7 +18,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from b2er import identify, pipeline  # noqa: E402
+from b2er import coverage, identify, pipeline  # noqa: E402
 from b2er.adapters import default_registry  # noqa: E402
 from b2er.assembly import BuildError  # noqa: E402
 
@@ -36,23 +36,33 @@ def cmd_identify(args) -> int:
             print(f"region:    {report['region']}  game code {report['game_code']}  revision {report['revision']}")
         print(f"sha256:    {report['sha256']}  ({report['size_bytes']} bytes)")
         print(f"adapter:   {report['adapter'] or 'none'}" + (f" ({report['adapter_confidence']})" if report["adapter"] else ""))
+        print(f"support:   {report['support_status']}" + (f" (release {report['release']['pinned_release']})"
+                                                         if report.get("release") and report["release"]["pinned_release"] else ""))
         for line in report["evidence"]:
             print(f"evidence:  {line}")
         for line in report["diagnostics"]:
             print(f"note:      {line}")
-    return 0 if identity.status == identify.CLEAN_KNOWN and identity.adapter else 1
+    return 0 if identity.status == identify.CLEAN_KNOWN else 1
 
 
 def cmd_capabilities(args) -> int:
-    matrix = default_registry().matrix()
+    matrix = coverage.matrix(identify.load_fingerprints(), default_registry())
     if args.json:
         print(json.dumps(matrix, indent=2, sort_keys=True, ensure_ascii=False))
         return 0
-    for adapter_id, info in matrix.items():
-        print(f"{adapter_id}: {info['display_name']} (Generation {info['generation']}, adapter {info['version']})")
-        for cap, support in sorted(info["capabilities"].items()):
-            limit = f" {support['limit']}" if support.get("limit") else ""
-            print(f"  {support['level']:12} {cap}{limit} — {support['evidence']}")
+    print("Status ladder: recognized < buildable < feature-complete < runtime-validated < playthrough-validated")
+    for family_id, family in matrix.items():
+        print(f"\n[{family_id}] {family['name']}\n  shared: {family['shared']}\n  next:   {family['next']}")
+        for t in family["titles"]:
+            print(f"  {t['title']} (Gen {t['generation']}): {t['title_status']}")
+            for r in t["pinned_releases"]:
+                print(f"    release {r['release']} ({r['game_code']}): {r['status']} — {r['evidence']}")
+                if r.get("missing_for_next_status"):
+                    print(f"      next: {r['missing_for_next_status']}")
+            if args.verbose:
+                for cap, support in sorted(t["capabilities"].items()):
+                    limit = f" {support['limit']}" if support.get("limit") else ""
+                    print(f"      {support['level']:11} {cap}{limit}")
     return 0
 
 
@@ -82,8 +92,9 @@ def main(argv=None) -> int:
     p.add_argument("rom", type=Path)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_identify)
-    p = sub.add_parser("capabilities", help="show every adapter's capability matrix")
+    p = sub.add_parser("capabilities", help="per family/title/release support status and capability levels")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--verbose", action="store_true", help="list every capability level per title")
     p.set_defaults(func=cmd_capabilities)
     p = sub.add_parser("build", help="build a randomized ROM")
     p.add_argument("--rom", "--white2", dest="rom", required=True, type=Path, help="clean input ROM (only read)")
