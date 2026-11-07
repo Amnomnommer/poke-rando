@@ -82,3 +82,14 @@ def decode_trpoke(data: bytes, fmt: int, count: int) -> list[PartyMember]:
             raise FormatError(f"party member {i} level {level} is not 1..100")
         members.append(PartyMember(difficulty, ab, level, species, form, held, moves))
     return members
+
+
+def encode_trpoke(members: list[PartyMember]) -> bytes:
+    out = bytearray()
+    for m in members:
+        out += struct.pack("<BBHHH", m.difficulty, m.ability_gender, m.level, m.species, m.form)
+        if m.held_item is not None:
+            out += struct.pack("<H", m.held_item)
+        if m.moves is not None:
+            out += struct.pack("<4H", *m.moves)
+    return bytes(out)

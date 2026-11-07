@@ -10,7 +10,8 @@ from pathlib import Path
 
 from ... import w2u_checkout
 from ...assembly import BuildError, builders, ctrmap_dsi, patches, prereqs, stage, w2u_sdk
-from ...assembly.builders import encode_encounter_document, encode_trainer_document
+from ...assembly.builders import encode_encounter_document, trainer_labels
+from ...gamedata import trainer_codec
 from ...capabilities import Capability as C, Level, Support, unsupported
 from ...gamedata import encounters as enc, trainers as trn
 from ...model import BattleFormat, GameModel, SpeciesKey
@@ -287,22 +288,25 @@ class White2Adapter(Gen5Adapter):
         try:
             trdata = Narc.parse(rom.read_path(TRDATA_ARCHIVE)).members
             trpoke = Narc.parse(rom.read_path(TRPOKE_ARCHIVE)).members
-            mismatch = []
+            mismatch, details = [], []
+            labels = trainer_labels(data)
             for i in sorted(data.trainers):
-                d, p = encode_trainer_document(data, data.trainers[i])
-                if i >= len(trdata):
+                # Read-only: the normalized plan comes from the written sources, the ROM side from the rebuilt image.
+                planned_record = trainer_codec.encode(i, data.trainers[i], labels)
+                if i >= len(trdata) or i >= len(trpoke):
                     mismatch.append(i)
+                    details.append(f"trainer {i}: missing from the rebuilt ROM")
                     continue
-                got, want = trn.decode_trdata(trdata[i]), trn.decode_trdata(d)
-                if (got.trainer_class, got.battle_type, got.party_count) != (want.trainer_class, want.battle_type, want.party_count) or \
-                        [(m.species, m.level) for m in trn.decode_trpoke(trpoke[i], got.format, got.party_count)] != \
-                        [(m.species, m.level) for m in trn.decode_trpoke(p, want.format, want.party_count)]:
+                problems = trainer_codec.compare(i, trainer_codec.decode(i, trdata[i], trpoke[i]), planned_record)
+                if problems:
                     mismatch.append(i)
-            check("trainers_match_plan", not mismatch, f"{len(mismatch)} mismatched {mismatch[:5]}")
+                    details += problems
+            check("trainers_match_plan", not mismatch, f"{len(mismatch)} mismatched {mismatch[:5]}; {details[:5]}" if mismatch
+                  else f"{len(data.trainers)} trainers match field-for-field")
             converted = [x["trainer"] for x in plan.get("doubles", []) if x["converted"]]
             wrong = [t for t in converted if trn.decode_trdata(trdata[t]).battle_type != FORMAT_CODES[BattleFormat.DOUBLE]]
             check("major_battles_doubles", not wrong, f"{len(converted)} converted; {len(wrong)} not Doubles in the ROM")
-        except FormatError as error:
+        except (FormatError, trainer_codec.TrainerFieldError) as error:
             check("trainers_decodable", False, str(error))
         if post.get("script_patches"):
             problems = site_tools.verify_patches(rom, post["script_patches"])

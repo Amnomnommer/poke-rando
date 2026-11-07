@@ -15,12 +15,14 @@ import json
 import os
 import subprocess
 import time
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import capabilities as caps, coverage, identify
 from .adapters import BuildContext, default_registry
 from .assembly import BuildError, reports, workroot
+from .gamedata.trainer_codec import TrainerFieldError
 from .randomizer import policy, settings as settings_mod
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -134,7 +136,10 @@ def run(req: BuildRequest) -> dict:
     succeeded = False
     try:
         prepared = adapter.prepare(ctx)
-        model = adapter.read_model(ctx)
+        try:
+            model = adapter.read_model(ctx)
+        except TrainerFieldError as error:
+            raise BuildError(f"REFUSED: invalid trainer source: {error}") from None
         dynamic = adapter.dynamic_capabilities(ctx, model)
         refused = caps.check(dynamic, settings_mod.requested_capabilities(settings))
         if refused:
@@ -148,7 +153,7 @@ def run(req: BuildRequest) -> dict:
         applied = adapter.apply(ctx, planned, plan)
         rom = adapter.rebuild(ctx)
         rom, post = adapter.postprocess(ctx, rom, planned, plan)
-        verification = adapter.verify(ctx, rom, planned, plan, post)
+        verification = run_verifier(ctx, adapter, rom, planned, plan, post)
         if verification["structural_verification"] != "passed":
             failed = [c for c in verification["checks"] if c["status"] == "fail"]
             raise BuildError("verification failed:\n  " + "\n  ".join(f"{c['name']}: {c['detail']}" for c in failed))
@@ -201,6 +206,21 @@ def run(req: BuildRequest) -> dict:
             workroot.remove(root, Path(req.workroot_base))
         elif not succeeded:
             print(f"[b2er] workroot kept for diagnosis: {root} (local game data; never commit it)", flush=True)
+
+
+VERIFIER_LOG = "verifier-traceback.log"
+
+
+def run_verifier(ctx, adapter, rom: bytes, planned, plan: dict, post: dict) -> dict:
+    """Semantic verification; an unexpected exception becomes a clean FAILED diagnostic, traceback kept locally."""
+    try:
+        return adapter.verify(ctx, rom, planned, plan, post)
+    except BuildError:
+        raise
+    except Exception as error:  # noqa: BLE001 - every verifier crash must withhold outputs, not leak a traceback
+        (Path(ctx.workspace) / VERIFIER_LOG).write_text(traceback.format_exc(), encoding="utf-8")
+        raise BuildError(f"FAILED: semantic verification could not complete ({type(error).__name__}: {error}); "
+                         f"no outputs were published; traceback in the kept workroot's {VERIFIER_LOG}") from None
 
 
 def spoiler(plan: dict, settings: dict, seed: str, build_key: str) -> str:
