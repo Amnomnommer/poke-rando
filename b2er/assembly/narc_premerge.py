@@ -74,19 +74,20 @@ def cmproj_roots(cmproj: Path) -> tuple[Path, Path]:
     return (root / base).resolve(), (root / overlay).resolve()
 
 
-def narc_extent(data: bytes, where: str) -> int:
-    """Strict structural check of a whole NARC file: declared size == stored size, sections in bounds."""
-    if len(data) < 16 or data[:4] != b"NARC":
-        raise PremergeError(f"{where}: not a NARC")
-    declared = struct.unpack_from("<I", data, 8)[0]
-    if declared != len(data):
-        raise PremergeError(f"{where}: NARC declares {declared} bytes but is {len(data)}")
-    from ..nds.narc import Narc
+def narc_extent(data: bytes, where: str, pad_bytes: frozenset[int] = frozenset({0xFF})) -> int:
+    """Strict structural check of a whole NARC: declared size == stored size, sections, FAT and every member
+    range in bounds, no overlap, gaps only alignment padding. Member storage order may differ from index order."""
+    from ..nds.narc import read_layout
     try:
-        Narc.parse(data)
+        return read_layout(data, pad_bytes).file_size
     except FormatError as error:
         raise PremergeError(f"{where}: {error}") from None
-    return declared
+
+
+def describe(data: bytes) -> dict:
+    from ..nds.narc import read_layout
+    layout = read_layout(data, frozenset({0x00, 0xFF}))
+    return {**layout.describe(), "sha256": hashlib.sha256(data).hexdigest()}
 
 
 def arc_directories(overlay: Path) -> list[Path]:
@@ -113,7 +114,7 @@ def premerge(cmproj: Path, work: Path, runner) -> dict:
         if not base.is_file():
             continue  # a brand-new archive has no base tail to leave behind
         base_bytes = base.read_bytes()
-        narc_extent(base_bytes, f"base {rel.as_posix()}")
+        narc_extent(base_bytes, f"base {rel.as_posix()}", frozenset({0x00, 0xFF}))
         target = work / f"{len(jobs):04d}.narc"
         target.write_bytes(base_bytes)
         jobs.append((rel, directory, target, len(base_bytes)))
@@ -133,7 +134,7 @@ def premerge(cmproj: Path, work: Path, runner) -> dict:
         staging.write_bytes(merged)
         os.replace(staging, base)
         shutil.rmtree(directory)
-        entries.append({"path": rel.as_posix(), "base_size": base_size, "merged_size": size,
+        entries.append({"path": rel.as_posix(), "base_size": base_size, "merged_size": size, "merged_structure": describe(merged),
                         "stale_tail_avoided": max(0, base_size - size), "sha256": hashlib.sha256(merged).hexdigest()})
     report = {"merged": entries}
     (work / REPORT).write_text(json.dumps(report, indent=1), encoding="utf-8")
