@@ -16,5 +16,5 @@ jobs:
         run: python3 --version
       - name: Reject proprietary or generated game data
         run: bash scripts/check-repository-safety.sh
-      - name: Run synthetic safety and pin tests
+      - name: Run synthetic safety, pin, and checkout-verifier tests
         run: python3 -I -m unittest discover -s tests -v
