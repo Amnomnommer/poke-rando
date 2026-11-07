@@ -54,6 +54,9 @@ vfs/
 pmc/
 
 # Local inputs, caches, outputs, and test evidence
+.alpha-work/
+Alpha-0.1-builds/
+emulator-logs/
 tester/input/
 tester/cache/
 tester/output/

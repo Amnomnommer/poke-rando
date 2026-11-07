@@ -54,6 +54,10 @@ FORBIDDEN_DIRECTORIES = frozenset(
         "temp",
         "tmp",
         "user-data",
+        # Alpha build workroots, outputs, and emulator captures.
+        ".alpha-work",
+        "alpha-0.1-builds",
+        "emulator-logs",
     }
 )
 
