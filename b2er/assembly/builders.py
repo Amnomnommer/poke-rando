@@ -98,7 +98,12 @@ class MockBuilder:
                     files[f"patches/{plugin.name}"] = plugin.read_bytes()
         arm9 = (w2u / "pmc" / "ARM9PMC.bin").read_bytes()
         overlays = [(o.overlay_id, base.file_bytes(o.file_id), o.compressed) for o in base.overlays()]
-        image = build_rom(game_code=base.game_code.encode(), arm9=arm9, files=files, overlays=overlays)
+        extracted = workroot / "IRDO_Extracted"
+        dsi_parts = None
+        if (extracted / "arm9i.bin").is_file():  # carry staged DSi components, as CTRMap would
+            dsi_parts = {"arm9i": (extracted / "arm9i.bin").read_bytes(), "arm7i": (extracted / "arm7i.bin").read_bytes(),
+                         "blowfish": (extracted / "twlblowfishtable.bin").read_bytes()}
+        image = build_rom(game_code=base.game_code.encode(), arm9=arm9, files=files, overlays=overlays, dsi=dsi_parts)
         output = w2u / "build-alpha" / "White2Upgrade.nds"
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(image)

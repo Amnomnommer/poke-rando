@@ -7,6 +7,7 @@ import stat
 import subprocess
 from pathlib import Path
 
+from ..nds import dsi
 from ..nds.rom import Rom
 from ..w2u_checkout import ReadOnlyGit
 from . import BuildError
@@ -75,16 +76,19 @@ def stage_w2u(checkout: Path, destination: Path, swan_path: str) -> dict:
 
 
 def banner_size(rom: Rom) -> int:
-    offset = rom.field("banner_offset")
-    if offset == 0 or offset + 2 > len(rom.data):
-        return 0
-    version = int.from_bytes(rom.data[offset : offset + 2], "little")
-    return {1: 0x840, 2: 0x940, 3: 0xA40, 0x103: 0x23C0}.get(version, 0x840)
+    return dsi.banner_size(bytes(rom.data[:0x1000]))
 
 
-def extract_base(rom_bytes: bytes, destination: Path) -> dict:
-    """Write the clean ROM's files in the base-VFS layout W2U expects (data/, overlay/, binaries)."""
+def extract_base(rom_bytes: bytes, destination: Path, arm9i_provider=None) -> dict:
+    """Write the clean ROM's files in CTRMap's base layout (data/, overlay/, NTR binaries, and DSi binaries).
+
+    For a TWL-extended ROM, ``arm9i_provider(raw_components) -> bytes`` must return CTRMap's arm9i.bin
+    (modcrypt area 1 decrypted by the pinned CTRMap); arm7i.bin and twlblowfishtable.bin are exact bytes.
+    """
     rom = Rom(rom_bytes)
+    dsi_raw = dsi.extract_raw(rom_bytes)  # validates every DSi region before anything is written
+    if dsi_raw and arm9i_provider is None:
+        raise BuildError("DSi-enhanced ROM: an arm9i provider (pinned CTRMap) is required")
     destination.mkdir(parents=True, exist_ok=False)
     for path, file_id in rom.paths().items():
         target = destination / "data" / path
@@ -93,7 +97,11 @@ def extract_base(rom_bytes: bytes, destination: Path) -> dict:
     overlay_dir = destination / "overlay"
     overlay_dir.mkdir()
     for overlay in rom.overlays():
-        (overlay_dir / f"overlay_{overlay.overlay_id:04d}.bin").write_bytes(rom.file_bytes(overlay.file_id))
+        # CTRMap names overlay files by table index; W2U references them by overlay ID. Require both to agree.
+        if overlay.overlay_id != overlay.index:
+            raise BuildError(f"overlay table entry {overlay.index} has ID {overlay.overlay_id}; CTRMap's index naming "
+                             "and W2U's ID references would disagree")
+        (overlay_dir / f"overlay_{overlay.index:04d}.bin").write_bytes(rom.file_bytes(overlay.file_id))
     d = rom.data
     regions = {
         "arm9.bin": (rom.field("arm9_offset"), rom.field("arm9_size")),
@@ -104,5 +112,18 @@ def extract_base(rom_bytes: bytes, destination: Path) -> dict:
         "banner.bin": (rom.field("banner_offset"), banner_size(rom)),
     }
     for name, (offset, size) in regions.items():
+        if offset < 0 or size < 0 or offset + size > len(d):
+            raise BuildError(f"{name} region 0x{offset:x}+0x{size:x} is outside the ROM")
         (destination / name).write_bytes(bytes(d[offset : offset + size]))
-    return {"files": len(rom.paths()), "overlays": len(rom.overlays())}
+    report = {"files": len(rom.paths()), "overlays": len(rom.overlays()), "dsi_enhanced": bool(dsi_raw)}
+    if dsi_raw:
+        ours = {name: (destination / name).read_bytes() for name in regions} | dsi_raw
+        ours |= {f"overlay/{p.name}": p.read_bytes() for p in sorted(overlay_dir.iterdir())}
+        arm9i = arm9i_provider(ours)
+        if len(arm9i) != len(dsi_raw["arm9i.bin"]):
+            raise BuildError("arm9i provider changed the ARM9i length")
+        (destination / "arm9i.bin").write_bytes(arm9i)
+        (destination / "arm7i.bin").write_bytes(dsi_raw["arm7i.bin"])
+        (destination / "twlblowfishtable.bin").write_bytes(dsi_raw["twlblowfishtable.bin"])
+        report["dsi_components"] = {name: len(data) for name, data in sorted(dsi_raw.items())}
+    return report

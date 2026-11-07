@@ -328,6 +328,7 @@ def build_rom(
     title: bytes = b"SYNTHETICROM",
     extended_header: bool = True,
     ctrmap_signature: bool = True,
+    dsi: dict | None = None,
 ) -> bytes:
     """Assemble a structurally valid DS image (used for synthetic tests and the mock builder)."""
     header_size = EXTENDED_HEADER_SIZE if extended_header else HEADER_SIZE
@@ -372,10 +373,33 @@ def build_rom(
         struct.pack_into("<II", image, fat_offset + file_id * 8, start, start + len(payload))
         align(4)
     align()
+    twl_fields = {}
+    if dsi is not None:  # synthetic DSi-enhanced layout: TWL region, blowfish table, ARM9i, ARM7i
+        while len(image) % 0x80000:
+            image.append(0xFF)
+        twl_start = len(image)
+        image += dsi.get("blowfish", bytes((i * 13) & 0xFF for i in range(0x3000)))
+        arm9i_offset = len(image)
+        image += dsi["arm9i"]
+        align()
+        arm7i_offset = len(image)
+        image += dsi["arm7i"]
+        align()
+        area1 = dsi.get("modcrypt1_size", min(0x4000, len(dsi["arm9i"])))
+        twl_fields = {"twl_start": twl_start, "arm9i": (arm9i_offset, len(dsi["arm9i"])),
+                      "arm7i": (arm7i_offset, len(dsi["arm7i"])), "area1": (arm9i_offset, area1)}
     image[0:12] = title[:12].ljust(12, b"\x00")
     image[0x0C:0x10] = game_code
     image[0x10:0x12] = b"01"
-    image[0x12] = 0x02 if extended_header else 0x00
+    image[0x12] = 0x02 if dsi is not None else 0x00
+    if twl_fields:
+        struct.pack_into("<HH", image, 0x90, twl_fields["twl_start"] // 0x80000, twl_fields["twl_start"] // 0x80000)
+        struct.pack_into("<I", image, 0x1C0, twl_fields["arm9i"][0])
+        struct.pack_into("<I", image, 0x1CC, twl_fields["arm9i"][1])
+        struct.pack_into("<I", image, 0x1D0, twl_fields["arm7i"][0])
+        struct.pack_into("<I", image, 0x1DC, twl_fields["arm7i"][1])
+        struct.pack_into("<II", image, 0x220, *twl_fields["area1"])
+        struct.pack_into("<I", image, 0x210, len(image))  # total used ROM size (non-zero marks TWL-extended)
     for name, value in (
         ("arm9_offset", arm9_offset), ("arm9_ram", 0x02000000), ("arm9_size", len(arm9)),
         ("arm7_offset", arm7_offset), ("arm7_size", 0x100),
