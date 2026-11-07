@@ -20,6 +20,20 @@ The first engineering milestone is a clean-room recovery from the pinned upstrea
 
 Stretch goals are deferred until all core gates pass.
 
+## Alpha 0.1
+
+The first integrated, locally buildable candidate is here. It is **structurally verified only**: runtime acceptance has not been performed.
+
+```sh
+./Build-Alpha-0.1.sh --white2 /path/to/cleanwhite2.nds --black2 /path/to/cleanblack2.nds \
+                     --w2u /path/to/W2U-Project --seed "example-seed" [--settings settings.example.json]
+./Launch-Alpha-0.1.sh Alpha-0.1-builds/<label>.nds [--smoke 90 | --gdb]
+```
+
+- [`docs/alpha-0.1.md`](docs/alpha-0.1.md): prerequisites, build steps, outputs, launcher, first-play checklist.
+- [`docs/randomizer.md`](docs/randomizer.md): features, guarantees, known defects.
+- [`docs/species-id-model.md`](docs/species-id-model.md): species-ID layout and the open #1024/#1025 decision.
+
 ## Start here
 
 - [`B2ER_PM_ARCHITECT_HANDOFF.md`](B2ER_PM_ARCHITECT_HANDOFF.md) — product scope, architecture, evidence, and acceptance gates.

@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "mode": "randomized",
+  "unsupported_feature_policy": "skip",
+  "species": {
+    "include_legendaries": false
+  },
+  "starters": {
+    "mode": "random"
+  },
+  "wild": {
+    "mode": "random",
+    "similar_strength": true
+  },
+  "trainers": {
+    "mode": "random",
+    "similar_strength": true
+  },
+  "items": {
+    "mode": "shuffle"
+  },
+  "gifts": {
+    "mode": "vanilla"
+  },
+  "statics": {
+    "mode": "vanilla"
+  },
+  "evolutions": {
+    "normalize_impossible": true
+  },
+  "doubles": {
+    "major_battles": true,
+    "all_trainers": false
+  }
+}
