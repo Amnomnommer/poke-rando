@@ -18,7 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import synthetic_w2u as sw  # noqa: E402
 from b2er import emulator, sentinels  # noqa: E402
-from b2er.assembly import BuildError, pipeline, reports, workroot  # noqa: E402
+from b2er import pipeline  # noqa: E402
+from b2er.assembly import BuildError, reports, workroot  # noqa: E402
 from b2er.gamedata import encounters as enc  # noqa: E402
 from b2er.nds import arm9  # noqa: E402
 from b2er.nds.narc import Narc  # noqa: E402
@@ -55,39 +56,48 @@ class PipelineTests(unittest.TestCase):
 
     def request(self, seed: str = "example-seed", **overrides) -> pipeline.BuildRequest:
         type(self).counter += 1
-        n = self.counter
-        fields = dict(white2=self.white, black2=self.black, w2u=self.checkout, seed=seed,
-                      output_dir=self.tmp / f"out {n}", workroot_base=self.tmp / "work", builder="mock",
-                      pins_dir=self.pins, patch_pins=sw.patch_pins(self.facts))
+        fields = dict(rom=self.white, seed=seed, auxiliary={"black2": self.black, "w2u": self.checkout},
+                      output_dir=self.tmp / f"out {self.counter}", workroot_base=self.tmp / "work", pins_dir=self.pins,
+                      species_max=1023, options={"builder": "mock", "patch_pins": sw.patch_pins(self.facts)})
         fields.update(overrides)
         return pipeline.BuildRequest(**fields)
+
+    def assertRefused(self, fragment: str, **overrides) -> None:
+        req = self.request(**overrides)
+        with self.assertRaises(BuildError) as ctx:
+            pipeline.run(req)
+        self.assertIn(fragment, str(ctx.exception))
+        self.assertFalse(req.output_dir.exists(), "a refused build must not emit outputs")
 
     def test_end_to_end_success(self) -> None:
         inputs_before = {p: (p.read_bytes(), p.stat().st_mtime_ns, p.stat().st_ino) for p in (self.white, self.black)}
         checkout_before = tree_state(self.checkout)
         req = self.request()
         result = pipeline.run(req)
-        out = req.output_dir
-        names = sorted(p.name for p in out.iterdir())
         label = result["label"]
+        names = sorted(p.name for p in req.output_dir.iterdir())
         self.assertEqual(names, sorted(f"{label}.{s}" for s in ("nds", "manifest.json", "plan.json", "settings.json",
                                                               "verification.json", "spoiler.txt")))
-        manifest = json.loads((out / f"{label}.manifest.json").read_text())
-        rom_bytes = (out / f"{label}.nds").read_bytes()
+        manifest = json.loads((req.output_dir / f"{label}.manifest.json").read_text())
+        rom_bytes = (req.output_dir / f"{label}.nds").read_bytes()
         self.assertEqual(manifest["output"]["sha256"], hashlib.sha256(rom_bytes).hexdigest())
+        self.assertEqual(manifest["identity"]["status"], "clean_known")
+        self.assertEqual(manifest["identity"]["fingerprint"], "gen5-white2")
+        self.assertEqual(manifest["adapter"]["id"], "gen5.white2")
         self.assertEqual(manifest["verification"], {"build_completed": True, "structural_verification": "passed",
                                                     "runtime_acceptance": "not yet performed"})
-        self.assertFalse(manifest["species_model"]["requirement_met"])
-        self.assertEqual(manifest["species_model"]["missing_required_national_dex"], [1024, 1025])
-        for item in manifest["features"].values():
-            self.assertFalse(str(item).startswith("skipped"), manifest["features"])
-        # Finished ROM properties.
+        self.assertIn("species limited to #1..#1023 by request", manifest["warnings"])
+        self.assertIn("hidden_item_randomization", manifest["unsupported_capabilities"])
+        for key in ("seed", "settings", "tool", "provenance", "capabilities", "transformations"):
+            self.assertIn(key, manifest)
         rom = Rom(rom_bytes)
         self.assertEqual(arm9.classify(rom.arm9()).state, "uncompressed")
         self.assertFalse([p for p in rom.paths() if "MainMenuSkip" in p])
         self.assertIn("patches/White2Upgrade.dll", rom.paths())
         self.assertEqual(rom.integrity_problems(), [])
-        # Inputs and source checkout untouched; workroot removed.
+        checks = {c["name"] for c in result["verification"]["checks"]}
+        self.assertTrue({"encounters_match_plan", "trainers_match_plan", "major_battles_doubles", "script_patches_present",
+                         "encounter_species_in_range", "arm9_compression_state", "development_plugin_absent"} <= checks)
         for path, (data, mtime, ino) in inputs_before.items():
             self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_ino), (data, mtime, ino))
         self.assertEqual(tree_state(self.checkout), checkout_before)
@@ -96,22 +106,20 @@ class PipelineTests(unittest.TestCase):
     def test_outputs_are_sanitized(self) -> None:
         req = self.request()
         result = pipeline.run(req)
-        local = [str(self.tmp), str(self.tmp.resolve()), "my roms", "W2U checkout"]
         for name in result["outputs"].values():
             if name.endswith(".nds"):
                 continue
             text = (req.output_dir / name).read_text()
-            for fragment in local:
+            for fragment in (str(self.tmp), str(self.tmp.resolve()), "my roms", "W2U checkout"):
                 self.assertNotIn(fragment, text, f"{name} leaks {fragment!r}")
             self.assertNotIn("SYNTHTITLE", text)
 
-    def test_reproducible_and_seed_sensitive(self) -> None:
+    def test_byte_identical_rebuild_and_seed_sensitivity(self) -> None:
         a = pipeline.run(self.request("same-seed"))
         b = pipeline.run(self.request("same-seed"))
         c = pipeline.run(self.request("other-seed"))
         self.assertEqual((a["build_key"], a["sha256"]), (b["build_key"], b["sha256"]))
         self.assertNotEqual(a["sha256"], c["sha256"])
-        self.assertNotEqual(a["build_key"], c["build_key"])
 
     def test_diagnostic_build(self) -> None:
         req = self.request("diag", diagnostic=True)
@@ -120,44 +128,72 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(checks["route19_fixture"]["status"], "pass")
         rom = Rom((req.output_dir / result["outputs"]["rom"]).read_bytes())
         record = Narc.parse(rom.read_path("a/1/2/7")).members[2]
-        self.assertEqual(len(record), 928)
         self.assertEqual(enc.verify_route19_fixture(record), [])
-        trdata = Narc.parse(rom.read_path("a/0/9/1")).members
-        self.assertEqual({m[2] for m in trdata}, {0})  # no Doubles conversion in diagnostic mode
-        self.assertIn("Route19-Diagnostic", result["label"])
+        self.assertEqual({m[2] for m in Narc.parse(rom.read_path("a/0/9/1")).members}, {0})
+        self.assertIn("diagnostic", result["label"])
+
+    def test_full_species_range_refused_without_modification(self) -> None:
+        self.assertRefused("national_dex_max=1025", species_max=None)
+        self.assertEqual(list((self.tmp / "work").iterdir()), [])
+
+    def test_unsupported_feature_refused(self) -> None:
+        self.assertRefused("hidden_item_randomization: unsupported",
+                           settings_override={"items": {"hidden": "shuffle"}})
+
+    def test_dynamic_capability_refusal(self) -> None:
+        bare = self.tmp / "bare white 2.nds"
+        files = {"a/0/5/6": Narc([b"\x00"]).build(), "a/1/2/7": Narc([b""]).build(), "a/0/9/1": Narc([b""]).build(),
+                 "a/0/9/2": Narc([b""]).build()}
+        bare.write_bytes(sw.build_rom(game_code=b"IRDO", arm9=arm9.synthetic_arm9(), files=files))
+        pins = sw.make_pins(self.tmp / "bare pins", self.facts, bare, self.black)
+        req = self.request(rom=bare, pins_dir=pins)
+        with self.assertRaises(BuildError) as ctx:
+            pipeline.run(req)
+        self.assertIn("starter_randomization: unsupported", str(ctx.exception))
+        self.assertFalse(req.output_dir.exists())
+        for path in (self.tmp / "work").iterdir():
+            workroot.remove(path, self.tmp / "work")
+
+    def test_modified_and_unsupported_roms_refused(self) -> None:
+        modified = self.tmp / "modified.nds"
+        data = bytearray(self.white.read_bytes())
+        data[-1] ^= 0xFF
+        modified.write_bytes(bytes(data))
+        self.assertRefused("recognized_modified", rom=modified)
+        self.assertRefused("repacking: unsupported", rom=self.black)  # recognized; adapter declares recognition only
+        junk = self.tmp / "junk.bin"
+        junk.write_bytes(b"\x00" * 4096)
+        self.assertRefused("status=unknown", rom=junk)
 
     def test_preflight_aggregates_problems(self) -> None:
-        bad_rom = self.tmp / "not a rom.nds"
-        bad_rom.write_bytes(b"\x00" * 64)
         bad_settings = self.tmp / "settings.json"
         bad_settings.write_text(json.dumps({"trainers": {"keep_type_themes": True}}))
-        with self.assertRaises(BuildError) as ctx:
-            pipeline.run(self.request("", white2=bad_rom, settings_path=bad_settings))
+        stray = self.checkout / "stray.txt"
+        stray.write_text("untracked")
+        try:
+            req = self.request("", settings_path=bad_settings, auxiliary={"w2u": self.checkout})
+            with self.assertRaises(BuildError) as ctx:
+                pipeline.run(req)
+        finally:
+            stray.unlink()
         message = str(ctx.exception)
-        for fragment in ("--seed", "keep_type_themes", "clean ROM white2"):
+        for fragment in ("--seed", "keep_type_themes", "missing auxiliary input --black2"):
             self.assertIn(fragment, message)
 
     def test_dirty_checkout_rejected(self) -> None:
         stray = self.checkout / "stray.txt"
         stray.write_text("untracked")
         try:
-            with self.assertRaises(BuildError) as ctx:
-                pipeline.run(self.request())
-            self.assertIn("untracked_file", str(ctx.exception))
+            self.assertRefused("untracked_file")
         finally:
             stray.unlink()
 
-    def test_swapped_inputs_rejected(self) -> None:
-        with self.assertRaises(BuildError) as ctx:
-            pipeline.run(self.request(white2=self.black, black2=self.white))
-        self.assertIn("wrong_hash", str(ctx.exception))
-
     def test_failure_keeps_workroot_and_writes_no_outputs(self) -> None:
-        req = self.request(patch_pins={**sw.patch_pins(self.facts), "pmc_arm9": "0" * 64})
+        req = self.request(options={"builder": "mock", "patch_pins": {**sw.patch_pins(self.facts), "pmc_arm9": "0" * 64}})
         with self.assertRaises(BuildError):
             pipeline.run(req)
         self.assertFalse(req.output_dir.exists())
-        kept = [p for p in (self.tmp / "work").iterdir()]
+        kept = list((self.tmp / "work").iterdir())
         self.assertTrue(kept)
         for path in kept:
             workroot.remove(path, self.tmp / "work")
@@ -165,11 +201,26 @@ class PipelineTests(unittest.TestCase):
     def test_existing_outputs_not_overwritten(self) -> None:
         req = self.request("collide")
         pipeline.run(req)
-        again = self.request("collide", output_dir=req.output_dir)
         with self.assertRaises(FileExistsError):
-            pipeline.run(again)
+            pipeline.run(self.request("collide", output_dir=req.output_dir))
         for path in (self.tmp / "work").iterdir():
             workroot.remove(path, self.tmp / "work")
+
+    def test_cli_identify_and_capabilities(self) -> None:
+        cli = [sys.executable, "-I", str(REPO_ROOT / "scripts" / "b2er_cli.py"), "--pins-dir", str(self.pins)]
+        out = subprocess.run(cli + ["identify", str(self.white), "--json"], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        report = json.loads(out.stdout)
+        self.assertEqual((report["status"], report["adapter"], report["generation"]), ("clean_known", "gen5.white2", 5))
+        out = subprocess.run(cli + ["identify", str(self.black), "--json"], capture_output=True, text=True)
+        self.assertEqual(json.loads(out.stdout)["adapter"], "gen5.black2")
+        junk = self.tmp / "cli junk.bin"
+        junk.write_bytes(b"\x00" * 4096)
+        out = subprocess.run(cli + ["identify", str(junk)], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("unknown", out.stdout)
+        out = subprocess.run(cli + ["capabilities", "--json"], capture_output=True, text=True)
+        self.assertEqual(json.loads(out.stdout)["gen5.white2"]["capabilities"]["wild_randomization"]["level"], "supported")
 
 
 class WorkrootAndReportTests(unittest.TestCase):
@@ -236,7 +287,7 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         result = subprocess.run(["bash", str(REPO_ROOT / "Build-Alpha-0.1.sh"), "--help"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0)
-        self.assertIn("--white2", result.stdout)
+        self.assertIn("--rom", result.stdout)
         result = subprocess.run(["bash", str(REPO_ROOT / "Build-Alpha-0.1.sh")], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
 

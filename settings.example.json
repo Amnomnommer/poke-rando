@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "mode": "randomized",
-  "unsupported_feature_policy": "skip",
   "species": {
+    "national_max": 1025,
     "include_legendaries": false
   },
   "starters": {
@@ -17,7 +17,9 @@
     "similar_strength": true
   },
   "items": {
-    "mode": "shuffle"
+    "field": "shuffle",
+    "hidden": "vanilla",
+    "shops": "vanilla"
   },
   "gifts": {
     "mode": "vanilla"

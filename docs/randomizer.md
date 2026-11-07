@@ -2,11 +2,12 @@
 
 ## Settings and determinism
 
-`settings.example.json` documents every option. `b2er.randomizer.settings.normalize` handles them:
+`settings.example.json` documents every option. All policy lives in `b2er/randomizer/policy.py` and operates only on the normalized model (`b2er/model.py`). `b2er.randomizer.settings.normalize` handles the options:
 
 - defaults are filled in;
 - unknown options are rejected, and stretch-goal options are rejected with an explanation;
-- impossible combinations are rejected before any work starts (for example, the diagnostic mode combined with any randomization).
+- impossible combinations are rejected before any work starts (for example, the diagnostic mode combined with any randomization);
+- any requested feature the adapter does not support is refused before any modification. Nothing is silently skipped.
 
 **Build key.** The build key is SHA-256 over:
 
@@ -18,7 +19,7 @@
 - the project commit and whether the tree was dirty;
 - the builder.
 
-**Random streams.** All randomness comes from HMAC-SHA256 counter streams keyed by the build key, one independent stream per feature (`wild`, `starters`, `trainers`, `gifts`, `statics`, `items`). Python's `random` is not used.
+**Random streams.** All randomness comes from HMAC-SHA256 counter streams, one per feature (`wild`, `starters`, `trainers`, `gifts`, `statics`, `items`). Each stream is keyed by the seed and input provenance plus only that feature's own settings sections, so toggling an unrelated feature (for example items) does not reshuffle wild or trainer results; this is tested. Python's `random` is not used.
 
 **Reproducibility.** Identical inputs, revision, pins, settings and seed give an identical plan. With the mock builder they also give an identical ROM hash, which is tested. W2U's real toolchain is expected to be deterministic, but that is not yet proven.
 
@@ -35,7 +36,7 @@
 | Gifts / statics | script | Optional (off by default). `PokePartyAdd`/`PokePartyAddEx` and `CallWildBattle(Ex)` constant species are replaced from the obtainable closure. |
 | Route 19 diagnostic | source | Resolved by evidence: the unique four-season record whose grass has Patrat, Purrloin and Pidove at levels ≤ 5. Never assumed to be member 129. |
 
-**Script-level sites.** These come from a fail-closed disassembler whose command table is read at build time from your pinned local CTRMap jar; this repository never contains it. A site is patched only when its command was decoded on a fully known control-flow path, and patches are same-width in place. If a feature's sites cannot be established, the feature is reported as `skipped (...)`, or the build fails when `unsupported_feature_policy` is `"fail"`.
+**Script-level sites.** These come from a fail-closed disassembler whose command table is read at build time from your pinned local CTRMap jar; this repository never contains it. A site is patched only when its command was decoded on a fully known control-flow path, and patches are same-width in place. If a requested feature's sites cannot be established, the build is refused before anything is emitted.
 
 ## Guarantees enforced before any ROM is built
 

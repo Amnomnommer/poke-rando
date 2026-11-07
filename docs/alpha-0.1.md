@@ -27,26 +27,32 @@ It is **not runtime-accepted**. Each build reports three separate states: *build
 - A clean W2U-Project checkout at `9489aebf…`, with swan initialized: `git clone --recurse-submodules https://github.com/hzla/W2U-Project && git -C W2U-Project checkout 9489aebf42a870fa6a60816c273b0aa22fe5c1fe && git -C W2U-Project submodule update --init`. Do not run `make meson` or other setup inside it; the verifier requires a pristine checkout.
 - For play: melonDS 1.1 (Flatpak `net.kuribo64.melonDS`); optional `gdb-multiarch`.
 
-## Build
+## Identify, inspect capabilities, build
 
 ```sh
+./b2er.sh identify /path/to/cleanwhite2.nds        # read-only identification report
+./b2er.sh capabilities                             # adapter capability matrix
+
 ./Build-Alpha-0.1.sh \
   --white2 /path/to/cleanwhite2.nds \
   --black2 /path/to/cleanblack2.nds \
   --w2u /path/to/W2U-Project \
   --seed "example-seed" \
-  --settings settings.example.json        # optional
+  --species-max 1023 \
+  [--settings settings.example.json]
 ```
+
+`--species-max 1023` is required for White 2 Alpha 0.1. The pinned engine cannot represent #1024/#1025, and the build refuses to reduce the range silently (see `docs/species-id-model.md`). The reduction is recorded in the manifest.
 
 Diagnostic isolation build (Route 19 Patrat #504 L5 / Carbink #703 L6 / Chespin #650 L7, weighted 35/35/30, all four seasons, nothing else changed):
 
 ```sh
-./Build-Alpha-0.1.sh --white2 ... --black2 ... --w2u ... --seed diagnostic --diagnostic-route19
+./Build-Alpha-0.1.sh --white2 ... --black2 ... --w2u ... --seed diagnostic --species-max 1023 --diagnostic-route19
 ```
 
 What the command does, in order:
 
-1. **Preflight.** Every problem is aggregated and reported together. This covers:
+1. **Identification and preflight.** The ROM is identified (it must be the approved clean White 2), the adapter is selected, and requested capabilities are checked. Every problem is aggregated and reported together. This covers:
    - both ROMs verified against `pins/inputs.json`;
    - the W2U checkout verified against `pins/upstream.json` (clean, exact HEAD, pinned binaries, swan initialized and pinned);
    - settings validated;
@@ -73,13 +79,13 @@ What the command does, in order:
 | File | Content |
 | --- | --- |
 | `<label>.nds` | the ROM (local only; never commit or share) |
-| `<label>.manifest.json` | version, build key, settings, provenance hashes and commits, patches, output SHA-256, features, species model, verification states |
+| `<label>.manifest.json` | detected identity, adapter and version, species codec, seed, settings, tool/dependency versions, provenance, capabilities used (supported/experimental), unsupported capabilities, transformations, output SHA-256, verification states, warnings |
 | `<label>.plan.json` | machine-readable randomization plan, including script patches |
 | `<label>.spoiler.txt` | human-readable spoiler log |
 | `<label>.settings.json` | normalized settings |
 | `<label>.verification.json` | every structural/semantic check |
 
-None of these contain ROM bytes or absolute local paths; the pipeline enforces this. `<label>` is `W2ER-Alpha-0.1-<build key prefix>`.
+None of these contain ROM bytes or absolute local paths; the pipeline enforces this. `<label>` is `gen5-white2-<build key prefix>` (`gen5-white2-diagnostic-...` for diagnostic builds).
 
 ## Launch and smoke test
 

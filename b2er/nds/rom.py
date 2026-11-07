@@ -304,6 +304,19 @@ def _build_fnt(paths: list[str]) -> tuple[bytes, list[str]]:
     return bytes(main) + b"".join(sub_tables), order
 
 
+LOGO_CRC = 0xCF56
+
+
+def synthetic_logo_region() -> bytes:
+    """156 filler bytes whose CRC-16 is the cartridge logo CRC, without containing the logo itself."""
+    prefix = bytes(154)
+    for value in range(0x10000):
+        candidate = prefix + value.to_bytes(2, "little")
+        if crc16(candidate) == LOGO_CRC:
+            return candidate
+    raise AssertionError("no synthetic logo filler found")
+
+
 def build_rom(
     *,
     game_code: bytes,
@@ -372,6 +385,7 @@ def build_rom(
         struct.pack_into("<I", image, OFF[name], value)
     if extended_header and ctrmap_signature:
         image[SIGNATURE_OFFSET : SIGNATURE_OFFSET + 108] = b"\x00\x01" + b"\xff" * 105 + b"\x00"
+    image[0xC0:0x15C] = synthetic_logo_region()
     rom = Rom(image)
     rom.refresh_integrity()
     return bytes(rom.data)

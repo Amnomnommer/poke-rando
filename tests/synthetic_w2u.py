@@ -20,7 +20,7 @@ from b2er import tomlw
 from b2er.gamedata import encounters as enc
 from b2er.nds import arm9
 from b2er.nds.narc import Narc
-from b2er.nds.rom import build_rom
+from b2er.nds.rom import build_rom  # noqa: F401  (re-exported for tests)
 
 MAX_SPECIES = 1023
 EGG, BAD_EGG = 1024, 1025
