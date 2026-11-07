@@ -18,7 +18,7 @@ from ...capabilities import Capability as C, Level, Support, unsupported
 from ...gamedata import encounters as enc, trainers as trn
 from ...model import BattleFormat, GameModel, SpeciesKey
 from ...nds import FormatError, arm9 as arm9_tools, dsi
-from ...nds.narc import Narc
+from ...nds.narc import Narc, read_members
 from ...nds.rom import Rom
 from ...w2u_data import W2UData
 from . import sites as site_tools
@@ -264,7 +264,7 @@ class White2Adapter(Gen5Adapter):
         plugins = [p for p in rom.paths() if p.rsplit("/", 1)[-1] == patches.MAIN_MENU_SKIP]
         check("development_plugin_absent", not plugins, f"{len(plugins)} copies of {patches.MAIN_MENU_SKIP}")
         try:
-            narc = Narc.parse(rom.read_path(ENCOUNTER_ARCHIVE))
+            narc = Narc(read_members(rom.read_path(ENCOUNTER_ARCHIVE)))
             mismatch = [i for i in sorted(data.encounters)
                         if i >= len(narc.members) or narc.members[i] != encode_encounter_document(data, data.encounters[i])]
             check("encounters_match_plan", not mismatch and len(narc.members) == len(data.encounters),
@@ -289,8 +289,8 @@ class White2Adapter(Gen5Adapter):
         except FormatError as error:
             check("encounters_decodable", False, str(error))
         try:
-            trdata = Narc.parse(rom.read_path(TRDATA_ARCHIVE)).members
-            trpoke = Narc.parse(rom.read_path(TRPOKE_ARCHIVE)).members
+            trdata = read_members(rom.read_path(TRDATA_ARCHIVE))
+            trpoke = read_members(rom.read_path(TRPOKE_ARCHIVE))
             mismatch, details = [], []
             labels = trainer_labels(data)
             for i in sorted(data.trainers):

@@ -10,7 +10,7 @@ from __future__ import annotations
 from ...gamedata import scripts
 from ...model import ItemLocation, PokemonSite, SpeciesCodec, SpeciesKey
 from ...nds import FormatError
-from ...nds.narc import Narc
+from ...nds.narc import Narc, read_members, replace_members_same_size
 from ...nds.rom import Rom
 
 GIFT_OPCODES = ("PokePartyAdd", "PokePartyAddEx")
@@ -38,7 +38,7 @@ def find_script_archive(rom: Rom) -> tuple[str, Narc]:
         if data[:4] != b"NARC":
             continue
         try:
-            narc = Narc.parse(data)
+            narc = Narc(read_members(data))
         except FormatError:
             continue
         if len(narc.members) < 50:
@@ -98,12 +98,12 @@ def apply_patches(rom: Rom, table, patches: list[dict]) -> None:
         by_archive.setdefault(p["archive"], []).append(p)
     for archive, group in by_archive.items():
         original = rom.read_path(archive)
-        narc = Narc.parse(original)
-        members = [bytearray(m) for m in narc.members]
+        members = [bytearray(m) for m in read_members(original)]
         for p in group:
             site = scripts.ConstantSite(p["member"], p["command_offset"], p["command"], "", p["value_offset"], p["before"], ())
             scripts.patch_u16(members[p["member"]], site, p["after"], table)
-        rebuilt = Narc(list(map(bytes, members)), narc.fnt, narc.version, narc.pad_byte, narc.alignment, narc.pad_tail).build()
+        touched = {p["member"] for p in group}
+        rebuilt = replace_members_same_size(original, {i: bytes(members[i]) for i in touched})
         if len(rebuilt) != len(original):
             raise FormatError("script archive size changed; in-place patching must preserve size")
         rom.replace_file_in_place(rom.file_id(archive), rebuilt)
@@ -113,7 +113,7 @@ def verify_patches(rom: Rom, patches: list[dict]) -> list[str]:
     problems = []
     cache: dict[str, Narc] = {}
     for p in patches:
-        narc = cache.setdefault(p["archive"], Narc.parse(rom.read_path(p["archive"])))
+        narc = cache.setdefault(p["archive"], Narc(read_members(rom.read_path(p["archive"]))))
         member = narc.members[p["member"]]
         value = int.from_bytes(member[p["value_offset"]:p["value_offset"] + 2], "little")
         if value != p["after"]:
