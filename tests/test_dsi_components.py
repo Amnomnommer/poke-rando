@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -306,3 +307,157 @@ class CompoundCommandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def ctrmap_like(ours: dict[str, bytes], area1: int, log: list | None = None, tamper: bool = False):
+    """Emulates pinned CTRMap's access pattern: NDSROM.extractROM opens its input via FileStream, which is
+    `new RandomAccessFile(file, "rw")` (confirmed in the pinned jar's bytecode); "r+b" is the same request."""
+    def run(rom: Path, out: Path) -> subprocess.CompletedProcess:
+        try:
+            handle = open(rom, "r+b")
+        except PermissionError:
+            return subprocess.CompletedProcess([], 1, "", "java.io.FileNotFoundException: (Permission denied)\n")
+        with handle:
+            if log is not None:
+                log.append(os.fstat(handle.fileno()))
+            if tamper:
+                handle.seek(0x100)
+                handle.write(b"\xAA")
+        for name, data in ours.items():
+            (out / name).parent.mkdir(parents=True, exist_ok=True)
+            (out / name).write_bytes(bytes(area1) + data[area1:] if name == "arm9i.bin" else data)
+        return subprocess.CompletedProcess([], 0, "ok\n", "")
+    return run
+
+
+class CtrmapDisposableInputTests(unittest.TestCase):
+    """CTRMap must only ever see a private writable copy; the clean and canonical staged ROMs stay read-only."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.rom = dsi_rom()
+        self.original = self.tmp / "clean" / "white2.nds"
+        self.original.parent.mkdir()
+        self.original.write_bytes(self.rom)
+        self.original.chmod(0o444)
+        self.canonical = self.tmp / "Port-Pokeweb" / "cleanwhite2.nds"
+        self.canonical.parent.mkdir()
+        self.canonical.write_bytes(self.rom)
+        self.canonical.chmod(0o440)
+        captured = {}
+        stage.extract_base(self.rom, self.tmp / "base", lambda c: captured.update(c) or c["arm9i.bin"])
+        self.ours = captured
+        self.area1 = dsi.parse(self.rom).modcrypt1[1]
+
+    def tearDown(self) -> None:
+        for path in (self.original, self.canonical):
+            if path.exists():
+                path.chmod(0o644)
+        self._tmp.cleanup()
+
+    def extract(self, scratch: str = "ctrmap-dsi", **kw) -> bytes:
+        kw.setdefault("runner", ctrmap_like(self.ours, self.area1))
+        return ctrmap_dsi.ctrmap_arm9i(self.canonical, Path("unused.jar"), self.tmp / scratch, self.ours,
+                                       original=self.original, **kw)
+
+    def snapshot(self) -> list:
+        return [ctrmap_dsi.fingerprint(p) for p in (self.original, self.canonical)]
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root bypasses file permissions")
+    def test_ctrmap_access_pattern_fails_on_read_only_input(self) -> None:
+        result = ctrmap_like(self.ours, self.area1)(self.canonical, self.tmp)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Permission denied", result.stderr)
+
+    def test_extraction_through_private_disposable_copy(self) -> None:
+        before, seen, report = self.snapshot(), [], {}
+        arm9i = self.extract(runner=ctrmap_like(self.ours, self.area1, seen), report=report)
+        self.assertEqual(arm9i, bytes(self.area1) + ARM9I[self.area1:])
+        self.assertEqual(len(seen), 1)
+        opened = seen[0]
+        for protected in before:  # distinct inode, private mode, single link, owned by the running user
+            self.assertNotEqual((opened.st_dev, opened.st_ino), (protected["device"], protected["inode"]))
+        self.assertEqual(stat_mode(opened), 0o600)
+        self.assertEqual(opened.st_nlink, 1)
+        self.assertEqual(opened.st_uid, os.getuid())
+        self.assertEqual(self.snapshot(), before)  # bytes, mode, inode, timestamps unchanged
+        self.assertEqual(self.original.read_bytes(), self.rom)
+        self.assertEqual((stat_mode(self.original.stat()), stat_mode(self.canonical.stat())), (0o444, 0o440))
+        self.assertEqual(report["disposable_changed_by_ctrmap"], False)
+        self.assertTrue(report["protected_inputs_unchanged"])
+        scratch = self.tmp / "ctrmap-dsi"
+        self.assertFalse((scratch / ctrmap_dsi.DISPOSABLE_NAME).exists())
+        self.assertFalse((scratch / "extracted").exists())
+        self.assertNotIn(self.rom[:0x200].hex(), json_dump(report))
+
+    def test_symlink_and_hard_link_scratch_inputs_refused(self) -> None:
+        expected = ctrmap_dsi.fingerprint(self.canonical)
+        protected = self.snapshot()
+        scratch = self.tmp / "s"
+        scratch.mkdir()
+        (scratch / ctrmap_dsi.DISPOSABLE_NAME).symlink_to(self.canonical)
+        with self.assertRaises(BuildError):
+            ctrmap_dsi.make_disposable_copy(self.canonical, scratch, expected)
+        self.assertTrue((scratch / ctrmap_dsi.DISPOSABLE_NAME).is_symlink())
+        self.assertIn("disposable copy is a symlink",
+                      ctrmap_dsi.verify_disposable(scratch / ctrmap_dsi.DISPOSABLE_NAME, protected, expected))
+        (scratch / ctrmap_dsi.DISPOSABLE_NAME).unlink()
+        os.link(self.canonical, scratch / ctrmap_dsi.DISPOSABLE_NAME)
+        with self.assertRaises(BuildError):
+            ctrmap_dsi.make_disposable_copy(self.canonical, scratch, expected)
+        problems = ctrmap_dsi.verify_disposable(scratch / ctrmap_dsi.DISPOSABLE_NAME, protected, expected)
+        self.assertIn("disposable copy shares an inode with a protected input", problems)
+        self.assertTrue(any("hard links" in p for p in problems))
+        self.assertEqual(stat_mode(self.canonical.stat()), 0o440)  # never chmodded through the link
+
+    def test_changed_disposable_input_detected(self) -> None:
+        before, report = self.snapshot(), {}
+        with self.assertRaises(BuildError) as ctx:
+            self.extract(runner=ctrmap_like(self.ours, self.area1, tamper=True), report=report)
+        self.assertIn("unexpectedly modified its disposable input", str(ctx.exception))
+        self.assertTrue(report["disposable_changed_by_ctrmap"])
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse((self.tmp / "ctrmap-dsi" / "extracted").exists())
+
+    def test_copy_failure_leaves_no_partial_trusted_extraction(self) -> None:
+        def broken(src, dst, length=0):
+            dst.write(src.read(16))
+            raise OSError(5, "simulated I/O error")
+        with mock.patch.object(ctrmap_dsi.shutil, "copyfileobj", broken):
+            with self.assertRaises(BuildError):
+                self.extract(runner=lambda r, o: self.fail("CTRMap must not run"))
+        scratch = self.tmp / "ctrmap-dsi"
+        self.assertEqual(sorted(p.name for p in scratch.iterdir()), [])
+
+    def test_failed_ctrmap_run_leaves_no_partial_extraction(self) -> None:
+        def partial(rom, out):
+            (out / "arm9i.bin").write_bytes(b"half")
+            return subprocess.CompletedProcess([], 1, "", "boom\n")
+        with self.assertRaises(BuildError):
+            self.extract(runner=partial)
+        self.assertEqual(sorted(p.name for p in (self.tmp / "ctrmap-dsi").iterdir()),
+                         ["B2erCtrmapExtract.java", "ctrmap-extract.log"])
+
+    def test_repeated_extraction_is_deterministic(self) -> None:
+        self.assertEqual(self.extract("one"), self.extract("two"))
+
+    def test_java_runner_receives_only_the_disposable_copy(self) -> None:
+        fake = self.tmp / "fake-java"
+        argv_log = self.tmp / "argv.txt"
+        fake.write_text("#!/bin/sh\nprintf '%s\\n' \"$4\" > " + str(argv_log) + "\nexec 3<>\"$4\" || exit 1\nexit 7\n")
+        fake.chmod(0o755)
+        with self.assertRaises(BuildError) as ctx:
+            ctrmap_dsi.ctrmap_arm9i(self.canonical, Path("unused.jar"), self.tmp / "j", self.ours, str(fake),
+                                    original=self.original)
+        self.assertIn("exit 7", str(ctx.exception))
+        self.assertEqual(Path(argv_log.read_text().strip()).name, ctrmap_dsi.DISPOSABLE_NAME)
+
+
+def stat_mode(info) -> int:
+    return info.st_mode & 0o7777
+
+
+def json_dump(value) -> str:
+    import json
+    return json.dumps(value)

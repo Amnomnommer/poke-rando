@@ -16,7 +16,8 @@ def create(base: Path, label: str) -> Path:
     base = Path(base).resolve()
     base.mkdir(parents=True, exist_ok=True)
     path = Path(tempfile.mkdtemp(prefix=f"{label}-", dir=base))
-    (path / MARKER).write_text("disposable b2er workroot; safe to delete\n", encoding="utf-8")
+    (path / MARKER).write_text("disposable b2er workroot; CONTAINS LOCAL GAME DATA (ROM copies, extracted files); "
+                               "never commit, upload, or share it; safe to delete\n", encoding="utf-8")
     return path
 
 

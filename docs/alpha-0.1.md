@@ -58,7 +58,7 @@ What the command does, in order:
    - settings validated;
    - host tools present.
 2. **Workroot.** A unique disposable folder under `.alpha-work/`.
-3. **Staging.** W2U and swan are staged from Git objects (no checkout, filters or hooks). The ROMs are copied into the workroot read-only, and the clean White 2 file system is extracted as `IRDO_Extracted/`.
+3. **Staging.** W2U and swan are staged from Git objects (no checkout, filters or hooks). The ROMs are copied into the workroot read-only, and the clean White 2 file system is extracted as `IRDO_Extracted/`. For the DSi `arm9i.bin` step the pinned CTRMap extractor needs write access to its input (it opens it with `RandomAccessFile "rw"`), so it is given only a private disposable copy (`ctrmap-dsi/ctrmap-extract-input.nds`, mode 0600, new inode, size and SHA-256 verified) — never the clean ROM or the read-only canonical staged copy, whose fingerprints and metadata are re-checked afterwards. The copy and any partial extraction are deleted when the step ends; a build fails if CTRMap modified the copy.
 4. **Project patches**, each checked against its pinned pre-image:
    - every `MainMenuSkip(1).dll` is deleted and its Meson input removed;
    - a stale ARM9 `compressedStaticEnd` in the staged prebuilt ARM9 is cleared;
@@ -72,7 +72,7 @@ What the command does, in order:
    - header CRCs and the signature are refreshed.
 8. **Verification.** Header, CRCs and ARM9 state are checked. Encounters and trainers are decoded and compared with independent encodings of the plan. The Doubles conversions, script patches and the Route 19 fixture (in diagnostic mode) are checked.
 9. **Inputs re-verified.** The clean ROMs must be byte-identical, with the same file identity, as before the build.
-10. **Outputs written** to `Alpha-0.1-builds/` (gitignored), and the workroot is removed. A failed build keeps it for diagnosis.
+10. **Outputs written** to `Alpha-0.1-builds/` (gitignored), and the workroot is removed. A failed build keeps it for diagnosis; it contains local game data (marked in `.b2er-workroot`) and must never be committed or shared.
 
 ## Outputs (`Alpha-0.1-builds/`)
 
