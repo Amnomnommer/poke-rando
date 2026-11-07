@@ -9,12 +9,12 @@ import sys
 from pathlib import Path
 
 from ... import w2u_checkout
-from ...assembly import BuildError, builders, patches, prereqs, stage, w2u_sdk
+from ...assembly import BuildError, builders, ctrmap_dsi, patches, prereqs, stage, w2u_sdk
 from ...assembly.builders import encode_encounter_document, encode_trainer_document
 from ...capabilities import Capability as C, Level, Support, unsupported
 from ...gamedata import encounters as enc, trainers as trn
 from ...model import BattleFormat, GameModel, SpeciesKey
-from ...nds import FormatError, arm9 as arm9_tools
+from ...nds import FormatError, arm9 as arm9_tools, dsi
 from ...nds.narc import Narc
 from ...nds.rom import Rom
 from ...w2u_data import W2UData
@@ -98,7 +98,14 @@ class White2Adapter(Gen5Adapter):
         ctx.state["black2_input"] = "approved clean ROM" if black2 is not None else "placeholder (not a ROM)"
         for name in ("cleanwhite2.nds", "cleanblack2.nds"):
             (port / name).chmod(stat.S_IRUSR | stat.S_IRGRP)
-        base = stage.extract_base((port / "cleanwhite2.nds").read_bytes(), ctx.workspace / "IRDO_Extracted")
+        builder = ctx.options.get("builder", "w2u")
+        if builder == "mock":
+            # The mock builder never runs CTRMap, so arm9i.bin is staged raw; real builds use the pinned CTRMap.
+            provider = lambda components: components["arm9i.bin"]  # noqa: E731
+        else:
+            provider = lambda components: ctrmap_dsi.ctrmap_arm9i(  # noqa: E731
+                port / "cleanwhite2.nds", w2u / w2u_sdk.JAR, ctx.workspace / "ctrmap-dsi", components, ctx.options.get("java"))
+        base = stage.extract_base((port / "cleanwhite2.nds").read_bytes(), ctx.workspace / "IRDO_Extracted", provider)
         pins = ctx.options.get("patch_pins") or {}
         report = {
             "staged": staged, "base": base,
@@ -107,6 +114,8 @@ class White2Adapter(Gen5Adapter):
             "pmc_arm9": patches.repair_pmc_arm9(w2u, pins.get("pmc_arm9", patches.PMC_ARM9_SHA256)),
             "cmproj": patches.write_cmproj(w2u, pins.get("cmproj_example", patches.CMPROJ_EXAMPLE_SHA256)),
             "posix_shell": patches.make_shell_portable(w2u, pins.get("bash_arithmetic_sites")),
+            "rombuilder_guard": patches.guard_rombuilder(w2u, Path(__file__).resolve().parents[3],
+                                                         ctx.workspace / "IRDO_Extracted" / "header.bin"),
         }
         ctx.state["w2u"] = w2u
         ctx.say(f"staged W2U ({staged['files']} files); removed {len(report['main_menu_skip']['removed_files'])} "
@@ -182,8 +191,16 @@ class White2Adapter(Gen5Adapter):
         builder = (builders.MockBuilder() if ctx.options.get("builder") == "mock" else
                    builders.W2UMesonBuilder(meson.get("commit"), ctx.options.get("meson_source"), ctx.options.get("java"),
                                             ctx.options.get("jobs")))
+        roots = [ctx.state["w2u"] / "vfs", ctx.workspace / "IRDO_Extracted"]  # CTRMap merges overlay over base
+        missing = dsi.missing_components(roots)
+        if missing:
+            raise BuildError("required ROM components missing before assembly: " + ", ".join(missing))
         ctx.say(f"assembling with {builder.name} (Black 2 input: {ctx.state.get('black2_input')})")
-        rom = builder.build(ctx.workspace, ctx.state["w2u"]).read_bytes()
+        output = builder.build(ctx.workspace, ctx.state["w2u"])
+        problems = dsi.check_assembled_file(output, ctx.workspace / "IRDO_Extracted" / "header.bin")
+        if problems:
+            raise BuildError("ROMBuilder output rejected: " + "; ".join(problems))
+        rom = output.read_bytes()
         build_dir = ctx.state["w2u"] / "build-alpha"
         ran = [name for name in self.BLACK2_TARGET_OUTPUTS if (build_dir / name).exists()]
         if ran:

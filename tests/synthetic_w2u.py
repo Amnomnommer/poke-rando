@@ -70,6 +70,17 @@ GRAPHICS_MESON = """custom_target(
 """
 
 
+# Same compound-command shape as the upstream ROM target: ROMBuilder, then footer, then finalize.
+SYNTHETIC_ROM_COMMAND = (
+    "  command: ['sh', '-eu', '-c',\n"
+    "    '\"${JAVA:-java}\" -cp \"$1\" ctrmap.cli.ROMBuilder --input \"$2\" --output \"$3\"; "
+    "python3 \"$4\" --rom \"$3\"; python3 \"$5\" --rom \"$3\"',\n"
+    "    'rombuilder', 'jar', 'cmproj', '@OUTPUT@', 'footer.py', 'finalize.py'],\n"
+)
+SYNTHETIC_ARM9I = bytes((i * 31 + 7) & 0xFF for i in range(0x5000))
+SYNTHETIC_ARM7I = bytes((i * 17 + 3) & 0xFF for i in range(0x1800))
+
+
 def env() -> dict:
     e = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     e.update({"GIT_AUTHOR_NAME": "Synthetic", "GIT_AUTHOR_EMAIL": "s@example.invalid", "GIT_COMMITTER_NAME": "Synthetic",
@@ -230,7 +241,8 @@ def make_checkout(root: Path) -> dict:
     write(root, "data/text/system/382.toml", messages(names))
     write(root, "data/text/system/383.toml", messages(classes))
     write(root, "meson.build", "project('Synthetic')\nmain_menu_skip_patch = 'vfs/data/patches/MainMenuSkip(1).dll'\n"
-                               "rom = custom_target(\n  input: [\n    main_menu_skip_patch,\n    other,\n  ],\n)\n")
+                               "rom = custom_target(\n  input: [\n    main_menu_skip_patch,\n    other,\n  ],\n"
+                               + SYNTHETIC_ROM_COMMAND + ")\n")
     write(root, "data/graphics/meson.build", GRAPHICS_MESON)
     write(root, "White2Upgrade.cmproj.example", "LastROMPath: \"\"\nVFSBase: ../IRDO_Extracted\nVFSOverlay: vfs\n")
     plugin = b"synthetic development plugin"
@@ -308,7 +320,8 @@ def make_roms(directory: Path) -> tuple[Path, Path]:
     scripts_narc = Narc(members).build()
     files = {"a/0/5/6": scripts_narc, "a/1/2/7": Narc([b""]).build(), "a/0/9/1": Narc([b""]).build(),
              "a/0/9/2": Narc([b""]).build(), "a/0/1/6": Narc([b"synthetic"]).build()}
-    white = build_rom(game_code=b"IRDO", arm9=arm9.synthetic_arm9(), files=files, overlays=[(36, b"synthetic overlay 36", False)])
+    white = build_rom(game_code=b"IRDO", arm9=arm9.synthetic_arm9(), files=files, overlays=[(0, b"synthetic overlay 0", False)],
+                      dsi={"arm9i": SYNTHETIC_ARM9I, "arm7i": SYNTHETIC_ARM7I})
     black = build_rom(game_code=b"IREO", arm9=arm9.synthetic_arm9(), files={"x.bin": b"synthetic black 2"})
     directory.mkdir(parents=True, exist_ok=True)
     w, b = directory / "clean white 2.nds", directory / "clean black 2.nds"
