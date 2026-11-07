@@ -31,7 +31,28 @@ The `vfs/` and `pmc/` rules cover extensionless staged NARC members such as `vfs
 | DS ROM header | Bytes `0x0C..0x0F` are `IRDO` (White 2) or `IREO` (Black 2), the header game-code field. |
 | Binary size | The file is binary (NUL byte or invalid UTF-8 in the first 8 KiB) and larger than **64 KiB**, and is not allowlisted. |
 
-**Why 64 KiB.** It is far below any ROM, NARC, overlay or graphics bank of concern, and far above any reasonable hand-written project binary. Tests generate their binary fixtures at runtime instead of committing them. A legitimate project-original binary above the limit must be added to `scripts/repository-safety-allowlist.json` with its exact path, SHA-256, and a reason. A changed file no longer matches its entry and fails again.
+**Why 64 KiB.** It is far below any ROM, NARC, overlay or graphics bank of concern, and far above any reasonable hand-written project binary. Tests generate their binary fixtures at runtime instead of committing them. A legitimate project-original binary above the limit must be added to `scripts/repository-safety-allowlist.json` with its exact path, SHA-256, and a reason. A changed file no longer matches its entry and fails again. The allowlist must itself be committed (see *Allowlist integrity*).
+
+### Allowlist integrity
+
+The allowlist is read from its **stage-0 Git index blob**, never from the working tree, using the same index model as every other scanned file. An unstaged edit therefore cannot authorize a staged binary, and an unstaged edit cannot break a valid staged allowlist.
+
+The check fails closed and authorizes nothing if the allowlist:
+
+- is missing from the index;
+- is not a regular file (for example a symlink);
+- is conflicted, with any non-stage-0 entry;
+- is malformed:
+  - it is not UTF-8 JSON, or is larger than 1 MiB;
+  - `schema_version` is not `1`;
+  - it has unknown or duplicate keys;
+  - an entry does not have exactly `path`, `sha256` and `reason`;
+  - an entry has a non-normalized path, a SHA-256 that is not lowercase hex, or an empty reason;
+- lists the same path twice;
+- names a path prohibited by the directory, extension or basename rules;
+- names a file whose content is prohibited by the magic or DS-header rules. Those rules are never overridable.
+
+Each defect is reported against `scripts/repository-safety-allowlist.json` with the prefix `allowlist invalid:`.
 
 ## Known limits
 

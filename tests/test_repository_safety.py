@@ -17,6 +17,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GUARD = REPO_ROOT / "scripts" / "check-repository-safety.sh"
 SIZE_LIMIT = 64 * 1024
+ALLOWLIST = "scripts/repository-safety-allowlist.json"
+
+
+def allowlist_bytes(binaries: list[dict], **extra) -> bytes:
+    return json.dumps({"schema_version": 1, "binaries": binaries, **extra}).encode()
+
+
+def allow(path: str, data: bytes, reason: str = "synthetic test") -> dict:
+    return {"path": path, "sha256": hashlib.sha256(data).hexdigest(), "reason": reason}
 
 
 def synthetic_ds_header(game_code: bytes) -> bytes:
@@ -37,6 +46,7 @@ class GuardRepo:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.git("init", "-q")
+        self.add(ALLOWLIST, allowlist_bytes([]))
 
     def git(self, *args: str) -> None:
         subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True)
@@ -182,16 +192,129 @@ class RepositorySafetyTests(unittest.TestCase):
 
     def test_allowlisted_binary_passes_only_with_matching_hash(self) -> None:
         data = b"\x00\x01" * SIZE_LIMIT
-        allowlist = {
-            "schema_version": 1,
-            "binaries": [
-                {"path": "fixture.dat", "sha256": hashlib.sha256(data).hexdigest(), "reason": "synthetic test"}
-            ],
-        }
-        self.repo.add("scripts/repository-safety-allowlist.json", json.dumps(allowlist).encode())
+        self.repo.add(ALLOWLIST, allowlist_bytes([allow("fixture.dat", data)]))
         self.repo.add("fixture.dat", data)
         self.assertPasses()
         self.assertRejects("fixture.dat", data + b"\x00", "not allowlisted")
+
+    # --- indexed allowlist consistency ------------------------------------------
+
+    def write_unstaged(self, relative: str, data: bytes) -> None:
+        (self.repo.root / relative).write_bytes(data)
+
+    def assertAllowlistInvalid(self, expected_reason: str) -> None:
+        result = self.repo.run_guard()
+        self.assertEqual(result.returncode, 1, f"allowlist defect not rejected:\n{result.stdout}{result.stderr}")
+        self.assertIn(f"{ALLOWLIST!r}: allowlist invalid", result.stderr)
+        self.assertIn(expected_reason, result.stderr)
+
+    def test_unstaged_allowlist_edit_cannot_authorize_staged_binary(self) -> None:
+        data = b"\x00" * (SIZE_LIMIT + 1)
+        self.repo.add("fixture.dat", data)  # staged; staged allowlist stays empty
+        self.write_unstaged(ALLOWLIST, allowlist_bytes([allow("fixture.dat", data)]))
+        result = self.repo.run_guard()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("'fixture.dat'", result.stderr)
+        self.assertIn("not allowlisted", result.stderr)
+
+    def test_staged_allowlist_is_authoritative_over_working_tree(self) -> None:
+        data = b"\x00" * (SIZE_LIMIT + 1)
+        self.repo.add(ALLOWLIST, allowlist_bytes([allow("fixture.dat", data)]))
+        self.repo.add("fixture.dat", data)
+        for working_copy in (allowlist_bytes([]), b"{ not json", b""):
+            with self.subTest(working_copy=working_copy):
+                self.write_unstaged(ALLOWLIST, working_copy)
+                self.assertPasses()
+        (self.repo.root / ALLOWLIST).unlink()  # deleted on disk, still staged
+        self.assertPasses()
+
+    def test_missing_allowlist_fails_closed(self) -> None:
+        self.repo.git("rm", "-q", "--cached", "--", ALLOWLIST)
+        self.assertAllowlistInvalid("missing from the Git index")
+
+    def test_non_regular_allowlist_fails_closed(self) -> None:
+        self.repo.git("rm", "-q", "--cached", "--", ALLOWLIST)
+        (self.repo.root / ALLOWLIST).unlink()
+        os.symlink("elsewhere.json", self.repo.root / ALLOWLIST)
+        self.repo.git("add", "--", ALLOWLIST)
+        self.assertAllowlistInvalid("is not a regular file")
+
+    def test_conflicted_allowlist_fails_closed(self) -> None:
+        blob = subprocess.run(
+            ["git", "-C", str(self.repo.root), "hash-object", "-w", "--stdin"],
+            input=allowlist_bytes([]), capture_output=True, check=True,
+        ).stdout.decode().strip()
+        index_info = "".join(
+            f"0 {'0' * 40}\t{ALLOWLIST}\n" if stage == 0 else f"100644 {blob} {stage}\t{ALLOWLIST}\n"
+            for stage in (0, 1, 2, 3)
+        )
+        subprocess.run(
+            ["git", "-C", str(self.repo.root), "update-index", "--index-info"],
+            input=index_info.encode(), capture_output=True, check=True,
+        )
+        self.assertAllowlistInvalid("conflicted in the Git index")
+
+    def test_malformed_allowlists_fail_closed(self) -> None:
+        digest = "0" * 64
+        cases = {
+            "not json": (b"{ not json", "not valid UTF-8 JSON"),
+            "not utf-8": (b"\xff\xfe{}", "not valid UTF-8 JSON"),
+            "top level list": (b"[]", "top level must be a JSON object"),
+            "wrong schema": (json.dumps({"schema_version": 2, "binaries": []}).encode(), "schema_version must be 1"),
+            "missing schema": (json.dumps({"binaries": []}).encode(), "schema_version must be 1"),
+            "unknown top-level key": (allowlist_bytes([], extra=1), "unknown top-level keys"),
+            "binaries not list": (json.dumps({"schema_version": 1, "binaries": {}}).encode(), "must be a list"),
+            "missing reason": (allowlist_bytes([{"path": "a.dat", "sha256": digest}]), "must be an object with exactly"),
+            "extra entry key": (
+                allowlist_bytes([{"path": "a.dat", "sha256": digest, "reason": "x", "note": "y"}]),
+                "must be an object with exactly",
+            ),
+            "empty reason": (allowlist_bytes([{"path": "a.dat", "sha256": digest, "reason": " "}]), "reason must be"),
+            "uppercase sha": (allowlist_bytes([{"path": "a.dat", "sha256": "A" * 64, "reason": "x"}]), "sha256 must be"),
+            "short sha": (allowlist_bytes([{"path": "a.dat", "sha256": "0" * 63, "reason": "x"}]), "sha256 must be"),
+            "absolute path": (allowlist_bytes([{"path": "/a.dat", "sha256": digest, "reason": "x"}]), "normalized"),
+            "parent path": (allowlist_bytes([{"path": "../a.dat", "sha256": digest, "reason": "x"}]), "normalized"),
+            "unnormalized path": (allowlist_bytes([{"path": "a//b.dat", "sha256": digest, "reason": "x"}]), "normalized"),
+            "duplicate json key": (
+                b'{"schema_version": 1, "schema_version": 1, "binaries": []}',
+                "duplicate JSON keys",
+            ),
+        }
+        for label, (raw, reason) in cases.items():
+            with self.subTest(case=label):
+                self.repo.add(ALLOWLIST, raw)
+                self.assertAllowlistInvalid(reason)
+
+    def test_duplicate_allowlist_paths_fail_closed(self) -> None:
+        data = b"\x00" * (SIZE_LIMIT + 1)
+        self.repo.add(ALLOWLIST, allowlist_bytes([allow("fixture.dat", data), allow("fixture.dat", data, "again")]))
+        self.repo.add("fixture.dat", data)
+        self.assertAllowlistInvalid("duplicate path 'fixture.dat'")
+        self.assertIn("not allowlisted", self.repo.run_guard().stderr)  # nothing authorized
+
+    def test_prohibited_path_allowlist_entries_fail_closed(self) -> None:
+        cases = {
+            "vfs/data/a/0/0/4/123": "forbidden directory 'vfs/'",
+            "IRDO_Extracted/a.dat": "forbidden directory 'irdo_extracted/'",
+            "game.nds": "forbidden extension '.nds'",
+            "ftc/arm9.bin": "forbidden file name 'arm9.bin'",
+        }
+        for path, reason in cases.items():
+            with self.subTest(path=path):
+                self.repo.add(ALLOWLIST, allowlist_bytes([allow(path, b"synthetic")]))
+                self.assertAllowlistInvalid(f"is prohibited ({reason})")
+
+    def test_allowlist_cannot_authorize_prohibited_content(self) -> None:
+        cases = {
+            "narc": (synthetic_nitro(b"NARC") + bytes(SIZE_LIMIT), "Nitro NARC magic"),
+            "irdo": (synthetic_ds_header(b"IRDO") + bytes(SIZE_LIMIT), "Nintendo DS header for White 2 (IRDO)"),
+        }
+        for label, (data, reason) in cases.items():
+            with self.subTest(case=label):
+                self.repo.add(ALLOWLIST, allowlist_bytes([allow("fixture.dat", data)]))
+                self.repo.add("fixture.dat", data)
+                self.assertAllowlistInvalid(f"entry 'fixture.dat' names content that is prohibited ({reason}")
+                self.assertIn(f"'fixture.dat': {reason}", self.repo.run_guard().stderr)
 
     # --- entry types and filenames ----------------------------------------------
 
