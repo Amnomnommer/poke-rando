@@ -43,6 +43,33 @@ OPCODES = {0x02: ("VMHalt", [], "End"), 0x1E: ("VMJump", [("addr", "int")], "Jum
            0x200: ("CallWildBattle", [("species", "ushort"), ("level", "ushort")], "")}
 
 
+# A synthetic Meson fragment with the same shell shape as the upstream icon staging: entries named
+# PREFIX_<8 zero-padded digits>.<ext> are staged as decimal member numbers using Bash-only `10#` arithmetic.
+GRAPHICS_MESON = """custom_target(
+  'stage_icons',
+  command: ['sh', '-eu', '-c', \'\'\'
+    src="$1"
+    dst="$2"
+    rm -rf "$dst"
+    mkdir -p "$dst"
+    for file in "$src"/*; do
+      base="${file##*/}"
+      case "$base" in
+        007_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].*)
+          entry="${base#007_}"
+          entry="${entry%.*}"
+          cp "$file" "$dst/$((10#$entry))"
+          ;;
+        *)
+          cp "$file" "$dst/$base"
+          ;;
+      esac
+    done
+  \'\'\', 'stage_icons', 'in', 'out'],
+)
+"""
+
+
 def env() -> dict:
     e = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     e.update({"GIT_AUTHOR_NAME": "Synthetic", "GIT_AUTHOR_EMAIL": "s@example.invalid", "GIT_COMMITTER_NAME": "Synthetic",
@@ -204,6 +231,7 @@ def make_checkout(root: Path) -> dict:
     write(root, "data/text/system/383.toml", messages(classes))
     write(root, "meson.build", "project('Synthetic')\nmain_menu_skip_patch = 'vfs/data/patches/MainMenuSkip(1).dll'\n"
                                "rom = custom_target(\n  input: [\n    main_menu_skip_patch,\n    other,\n  ],\n)\n")
+    write(root, "data/graphics/meson.build", GRAPHICS_MESON)
     write(root, "White2Upgrade.cmproj.example", "LastROMPath: \"\"\nVFSBase: ../IRDO_Extracted\nVFSOverlay: vfs\n")
     plugin = b"synthetic development plugin"
     write(root, "MainMenuSkip(1).dll", plugin)
@@ -229,7 +257,8 @@ def make_checkout(root: Path) -> dict:
             "arm9_sha256": hashlib.sha256(stale).hexdigest(),
             "meson_sha256": hashlib.sha256((root / "meson.build").read_bytes()).hexdigest(),
             "cmproj_sha256": hashlib.sha256((root / "White2Upgrade.cmproj.example").read_bytes()).hexdigest(),
-            "plugin_sha256": hashlib.sha256(plugin).hexdigest()}
+            "plugin_sha256": hashlib.sha256(plugin).hexdigest(),
+            "graphics_meson_sha256": hashlib.sha256(GRAPHICS_MESON.encode()).hexdigest()}
 
 
 def synthetic_jar() -> bytes:
@@ -312,4 +341,5 @@ def make_pins(directory: Path, facts: dict, white: Path, black: Path) -> Path:
 
 def patch_pins(facts: dict) -> dict:
     return {"meson_build": facts["meson_sha256"], "pmc_arm9": facts["arm9_sha256"], "cmproj_example": facts["cmproj_sha256"],
-            "main_menu_skip": facts["plugin_sha256"]}
+            "main_menu_skip": facts["plugin_sha256"],
+            "bash_arithmetic_sites": {"data/graphics/meson.build": facts["graphics_meson_sha256"]}}
