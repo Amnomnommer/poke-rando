@@ -40,12 +40,11 @@ The current sprint is Phase 0 expanded-engine stability. Do not begin randomizer
 2. Run the repository-safety check and confirm that no clean/generated ROMs, saves, firmware, or proprietary extracted assets are tracked.
 3. Inspect pinned upstream commit `9489aebf42a870fa6a60816c273b0aa22fe5c1fe` and report its architecture, build flow, dependencies, and licenses before copying code.
 4. Propose the smallest recovery scaffold for input hash gates, clean-ROM immutability, dependency pinning, disposable caches, output manifests, SHA-256 reporting, and finished-ROM verification.
-5. Reconstruct the ARM9 compressed-static-end repair and production exclusion of `MainMenuSkip(1).dll`, each with a regression test against synthetic fixtures where possible.
-6. Reconstruct strict NARC editing and the Patrat/Carbink/Chespin Route 19 fixture contract from `RECOVERY_BASELINE.md` with synthetic tests.
-7. Do not require ROM bytes in cloud tests and do not upload proprietary assets.
-8. Stop and return the required change report before attempting encounter or Pokédex runtime repairs.
+5. Identify which upstream files may legally and technically be imported and which should remain a pinned external dependency.
+6. Do not require ROM bytes in cloud tests and do not upload proprietary assets.
+7. Stop and return the required change report and proposed file plan. Do not import upstream code or reconstruct runtime patches until Codex and Amelie authorize the next ticket.
 
-Runtime results for the lost `.0873` build are unavailable. Stop before encounter or Pokédex runtime repair after completing the bounded reconstruction assignment. Do not guess at those fixes.
+Runtime results for the lost `.0873` build are unavailable. This first ticket is audit and planning only. Do not guess at encounter or Pokédex fixes.
 
 ## Engineering constraints
 
