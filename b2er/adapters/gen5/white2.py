@@ -106,6 +106,7 @@ class White2Adapter(Gen5Adapter):
                                                             pins.get("main_menu_skip", patches.MAIN_MENU_SKIP_SHA256)),
             "pmc_arm9": patches.repair_pmc_arm9(w2u, pins.get("pmc_arm9", patches.PMC_ARM9_SHA256)),
             "cmproj": patches.write_cmproj(w2u, pins.get("cmproj_example", patches.CMPROJ_EXAMPLE_SHA256)),
+            "posix_shell": patches.make_shell_portable(w2u, pins.get("bash_arithmetic_sites")),
         }
         ctx.state["w2u"] = w2u
         ctx.say(f"staged W2U ({staged['files']} files); removed {len(report['main_menu_skip']['removed_files'])} "
