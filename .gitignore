@@ -27,6 +27,10 @@
 *.nscr
 *.ncer
 *.nanr
+*.nmcr
+*.nmar
+*.ssar
+*.sbnk
 *.nftr
 *.sdat
 *.sseq
@@ -39,10 +43,15 @@ arm9.bin
 y7.bin
 y9.bin
 banner.bin
-IRDO_Extracted/
-IREO_Extracted/
+IRDO_Extracted*/
+IREO_Extracted*/
 NitroFS/
 nitrofs/
+
+# Upstream W2U trees (never imported; see docs/audits/R-001-upstream-audit.md)
+dump/
+vfs/
+pmc/
 
 # Local inputs, caches, outputs, and test evidence
 tester/input/

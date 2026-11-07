@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "description": "Pinned external dependencies. W2U remains external: it is verified in a user-supplied local checkout and is never copied into this repository. This file holds identifiers and hashes only.",
+  "upstream": {
+    "id": "w2u",
+    "repository": "https://github.com/hzla/W2U-Project",
+    "commit": "9489aebf42a870fa6a60816c273b0aa22fe5c1fe",
+    "license": {
+      "status": "unresolved",
+      "value": null,
+      "reason": "No top-level LICENSE, COPYING, or NOTICE file at the pinned commit; no redistribution or import permission is granted."
+    },
+    "evidence": "docs/audits/R-001-upstream-audit.md sections 2 and 5"
+  },
+  "source_dependencies": [
+    {
+      "id": "swan",
+      "path": "include/swan",
+      "storage": "submodule",
+      "repository": "https://github.com/kingdom-of-ds-hacking/swan.git",
+      "commit": "07187e940a097309500769c83aac313032f970ac",
+      "commit_evidence": "gitlink recorded in the pinned W2U tree",
+      "license": {
+        "status": "unresolved",
+        "value": null,
+        "reason": "Submodule not fetched or audited in R-001."
+      }
+    },
+    {
+      "id": "extlib",
+      "path": "include/extlib",
+      "storage": "vendored",
+      "repository": "https://github.com/HelloOO7/ExtLib.git",
+      "commit": "4fcc85b78f4eafcf9c77347a51930359c3a6da39",
+      "commit_evidence": "declared by upstream include/native-dependencies.json; vendored copy not compared to that commit",
+      "license": {
+        "status": "resolved",
+        "value": "GPL-3.0",
+        "reason": "include/extlib/LICENSE in the pinned W2U tree."
+      }
+    },
+    {
+      "id": "nitrokernel",
+      "path": "include/NitroKernel",
+      "storage": "vendored",
+      "repository": "https://github.com/HelloOO7/NitroKernel.git",
+      "commit": "3cad669b3247651c82658cbcd0b46b672b611d4d",
+      "commit_evidence": "declared by upstream include/native-dependencies.json; vendored copy not compared to that commit",
+      "license": {
+        "status": "unresolved",
+        "value": null,
+        "reason": "No license file in the vendored tree; upstream repository not audited in R-001."
+      }
+    },
+    {
+      "id": "meson",
+      "path": "subprojects/meson-1.7.0",
+      "storage": "fetched-by-upstream-makefile",
+      "repository": "https://github.com/mesonbuild/meson",
+      "tag": "1.7.0",
+      "commit": {
+        "status": "unresolved",
+        "value": null,
+        "reason": "Upstream Makefile clones by tag only; the tag's commit has not been audited."
+      }
+    }
+  ],
+  "python_requirements": {
+    "status": "unresolved",
+    "value": null,
+    "reason": "Upstream requirements.txt lists Pillow, ndspy, and PyYAML without versions or hashes."
+  },
+  "external_binaries": [
+    {
+      "id": "ctrmap-jar",
+      "path": "tools/CTRMap/CTRMapV-dirty.jar",
+      "sha256": "29739c1942211434a372487f5ec7f30c10c8ffeefa6314da974883bdbfdd2b35",
+      "role": "required build tool (custom ROMBuilder/RPMTool)",
+      "evidence": "SHA-256 of the file at the pinned W2U commit, R-001 audit"
+    },
+    {
+      "id": "pmc-arm9",
+      "path": "pmc/ARM9PMC.bin",
+      "sha256": "8c6c2a4b93527d7654838cf712604e7eba73e0ad7628a7239323d668d96e6431",
+      "role": "required build input (prebuilt PMC-patched ARM9; game-derived, never redistributed)",
+      "evidence": "SHA-256 of the file at the pinned W2U commit, R-001 audit"
+    },
+    {
+      "id": "pmc-overlay",
+      "path": "pmc/OVL344.bin",
+      "sha256": "0c68b62f9ad1aa0da1ae954e75580f5f84e8b581181a5d3a303a1e0dc89f5ac8",
+      "role": "required build input (prebuilt PMC overlay)",
+      "evidence": "SHA-256 of the file at the pinned W2U commit, R-001 audit"
+    },
+    {
+      "id": "pmc-symbols",
+      "path": "pmc/RPMSYM-PMC.rpm",
+      "sha256": "319b74e1f3ed77e1857fe13c253b654e9e484f4df710aa5c475153fd6ed0be52",
+      "role": "required build input (PMC symbol module)",
+      "evidence": "SHA-256 of the file at the pinned W2U commit, R-002"
+    }
+  ],
+  "prohibited_development_plugins": [
+    {
+      "id": "main-menu-skip",
+      "paths": ["MainMenuSkip(1).dll", "vfs/data/patches/MainMenuSkip(1).dll"],
+      "sha256": "cd1da75cfb740ee1e5b9d3abacd23bf8209e3b6f536cbdd7bc336995518ca67f",
+      "reason": "Development-only forced Continue; must be absent from production builds (RECOVERY_BASELINE.md).",
+      "evidence": "SHA-256 of both copies at the pinned W2U commit, R-001 audit"
+    }
+  ]
+}

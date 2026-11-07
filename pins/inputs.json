@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "description": "Approved clean ROM inputs, identified by hash only. These files are supplied by the user locally and never enter this repository or any cloud environment.",
+  "inputs": [
+    {
+      "id": "white2",
+      "title": "Pokemon White Version 2",
+      "region": "US/Europe",
+      "game_code": "IRDO",
+      "role": "target",
+      "sha256": "3e50aec3db401332175a5d2b5fe2a68ac1a05ec63995dba9d1506b1b51837446",
+      "size_bytes": {
+        "status": "unresolved",
+        "value": null,
+        "reason": "Not recorded in the surviving handoff; to be read from the user's local clean ROM."
+      },
+      "evidence": "B2ER_PM_ARCHITECT_HANDOFF.md section 5; RECOVERY_BASELINE.md"
+    },
+    {
+      "id": "black2",
+      "title": "Pokemon Black Version 2",
+      "region": "US/Europe",
+      "game_code": "IREO",
+      "role": "required-by-upstream",
+      "sha256": "2e6b2415354aa41471bc7617068dce059a59931bf5c4348a264f8043f297683a",
+      "size_bytes": {
+        "status": "unresolved",
+        "value": null,
+        "reason": "Not recorded in the surviving handoff; to be read from the user's local clean ROM."
+      },
+      "evidence": "B2ER_PM_ARCHITECT_HANDOFF.md section 5; RECOVERY_BASELINE.md"
+    }
+  ]
+}

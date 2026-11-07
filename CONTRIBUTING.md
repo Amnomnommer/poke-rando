@@ -10,7 +10,7 @@ Never commit or upload:
 - Generated ROMs, build caches, debugger dumps, or runtime captures containing game bytes.
 - Clean-ROM hashes other than the approved identifiers already documented.
 
-Run `scripts/check-repository-safety.sh` before every commit. The CI workflow runs the same guard.
+Run `scripts/check-repository-safety.sh` before every commit. The CI workflow runs the same guard and its tests. Rules, thresholds, and the binary allowlist are documented in [`docs/repository-safety.md`](docs/repository-safety.md); pinned external identifiers live in [`pins/`](pins/README.md).
 
 ## Engineering rules
 
