@@ -3,7 +3,7 @@
 
     b2er identify ROM [--json]
     b2er capabilities [--json]
-    b2er build --rom ROM --seed SEED [--black2 ROM --w2u DIR] [--settings FILE] [--species-max N] [--diagnostic-route19]
+    b2er build ROM --seed SEED [--w2u DIR] [--black2 ROM] [--settings FILE] [--species-max N] [--diagnostic-route19]
 
 Exit codes: 0 success, 1 refused/failed (nothing emitted), 2 invalid arguments.
 """
@@ -67,6 +67,10 @@ def cmd_capabilities(args) -> int:
 
 
 def cmd_build(args) -> int:
+    if (args.rom_path is None) == (args.rom_option is None):
+        print("b2er build: give exactly one input ROM (positional, or --rom/--white2)", file=sys.stderr)
+        return 2
+    args.rom = args.rom_path or args.rom_option
     auxiliary = {k: v for k, v in (("black2", args.black2), ("w2u", args.w2u)) if v is not None}
     request = pipeline.BuildRequest(
         rom=args.rom, seed=args.seed, auxiliary=auxiliary, settings_path=args.settings, diagnostic=args.diagnostic_route19,
@@ -97,9 +101,10 @@ def main(argv=None) -> int:
     p.add_argument("--verbose", action="store_true", help="list every capability level per title")
     p.set_defaults(func=cmd_capabilities)
     p = sub.add_parser("build", help="build a randomized ROM")
-    p.add_argument("--rom", "--white2", dest="rom", required=True, type=Path, help="clean input ROM (only read)")
+    p.add_argument("rom_path", nargs="?", type=Path, help="clean input ROM (only read); its detected identity selects the adapter")
+    p.add_argument("--rom", "--white2", dest="rom_option", type=Path, help="same as the positional ROM")
     p.add_argument("--seed", required=True)
-    p.add_argument("--black2", type=Path, help="clean Black 2 ROM (White 2 adapter)")
+    p.add_argument("--black2", type=Path, help="optional clean Black 2 ROM (provenance only; White 2 does not need it)")
     p.add_argument("--w2u", type=Path, help="pinned W2U-Project checkout (White 2 adapter)")
     p.add_argument("--settings", type=Path)
     p.add_argument("--species-max", type=int, help="explicitly request a lower National Dex limit (recorded in the manifest)")

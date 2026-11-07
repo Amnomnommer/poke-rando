@@ -40,7 +40,8 @@ class GameAdapter(ABC):
     display_name: str
     generation: int
     fingerprints: tuple[str, ...]
-    auxiliary_inputs: dict[str, str] = {}  # name -> description (e.g. "black2": "clean Black 2 ROM")
+    auxiliary_inputs: dict[str, str] = {}  # required: name -> description (e.g. "w2u": "pinned checkout")
+    optional_inputs: dict[str, str] = {}  # optional; verified as approved clean ROMs when supplied
 
     @abstractmethod
     def capabilities(self) -> dict[Capability, Support]:

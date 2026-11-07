@@ -29,13 +29,13 @@ It is **not runtime-accepted**. Each build reports three separate states: *build
 
 ## Identify, inspect capabilities, build
 
+Only the White 2 ROM is needed; its detected identity selects the adapter. `--black2` is optional provenance only. W2U's Meson configuration names a Black 2 path for its separate Black 2 package targets, so b2er puts a non-ROM placeholder there and verifies that no Black 2 target ran. The two-ROM verifier `scripts/verify_rom_inputs.py` remains a development and provenance tool.
+
 ```sh
 ./b2er.sh identify /path/to/cleanwhite2.nds        # read-only identification report
 ./b2er.sh capabilities                             # adapter capability matrix
 
-./Build-Alpha-0.1.sh \
-  --white2 /path/to/cleanwhite2.nds \
-  --black2 /path/to/cleanblack2.nds \
+./b2er.sh build /path/to/cleanwhite2.nds \
   --w2u /path/to/W2U-Project \
   --seed "example-seed" \
   --species-max 1023 \
@@ -47,7 +47,7 @@ It is **not runtime-accepted**. Each build reports three separate states: *build
 Diagnostic isolation build (Route 19 Patrat #504 L5 / Carbink #703 L6 / Chespin #650 L7, weighted 35/35/30, all four seasons, nothing else changed):
 
 ```sh
-./Build-Alpha-0.1.sh --white2 ... --black2 ... --w2u ... --seed diagnostic --species-max 1023 --diagnostic-route19
+./b2er.sh build /path/to/cleanwhite2.nds --w2u /path/to/W2U-Project --seed diagnostic --species-max 1023 --diagnostic-route19
 ```
 
 What the command does, in order:

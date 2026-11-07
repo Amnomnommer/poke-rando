@@ -56,12 +56,12 @@ class SmokeResult:
         return f"smoke: {self.status} after {self.seconds:.0f}s ({len(self.faults)} fault lines) — {note}; log: {self.log}"
 
 
-def gdb_script(port: int = GDB_PORT) -> str:
-    return "\n".join([
-        "set pagination off",
-        "set confirm off",
-        "set architecture armv5te",
-        f"target remote localhost:{port}",
+def gdb_script(port: int = GDB_PORT, breakpoints: tuple[int, ...] = ()) -> str:
+    lines = ["set pagination off", "set confirm off", "set architecture armv5te", f"target remote localhost:{port}"]
+    for address in breakpoints:
+        lines += [f"break *0x{address:08x}", "commands", "  silent", f"  echo \\n=== breakpoint 0x{address:08x} ===\\n",
+                  "  info registers", "  bt 8", "  continue", "end"]
+    return "\n".join(lines + [
         "continue",
         "echo \\n=== stopped ===\\n",
         "info registers",
@@ -73,7 +73,7 @@ def gdb_script(port: int = GDB_PORT) -> str:
 
 
 def launch(rom: Path, log_dir: Path, *, smoke_seconds: int | None = None, gdb: bool = False,
-           emulator: str | None = None) -> SmokeResult | int:
+           emulator: str | None = None, breakpoints: tuple[int, ...] = ()) -> SmokeResult | int:
     rom = Path(rom).resolve()
     if not rom.is_file():
         raise FileNotFoundError(rom)
@@ -88,7 +88,7 @@ def launch(rom: Path, log_dir: Path, *, smoke_seconds: int | None = None, gdb: b
         gdb_process = None
         if gdb:
             script = log_dir / f"{rom.stem}-{stamp}.gdb"
-            script.write_text(gdb_script(), encoding="utf-8")
+            script.write_text(gdb_script(breakpoints=breakpoints), encoding="utf-8")
             if shutil.which("gdb-multiarch") is None:
                 handle.write(b"[launcher] gdb-multiarch not found; GDB capture skipped\n")
             else:

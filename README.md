@@ -27,8 +27,7 @@ The first integrated, locally buildable candidate is here. It is **structurally 
 ```sh
 ./b2er.sh identify /path/to/rom              # any ROM: identity, generation, adapter, evidence
 ./b2er.sh capabilities                        # per family/title/release status and capability levels
-./Build-Alpha-0.1.sh --white2 /path/to/cleanwhite2.nds --black2 /path/to/cleanblack2.nds \
-                     --w2u /path/to/W2U-Project --seed "example-seed" --species-max 1023
+./b2er.sh build /path/to/cleanwhite2.nds --w2u /path/to/W2U-Project --seed "example-seed" --species-max 1023
 ./Launch-Alpha-0.1.sh Alpha-0.1-builds/<label>.nds [--smoke 90 | --gdb]
 ```
 

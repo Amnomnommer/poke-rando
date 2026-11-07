@@ -22,11 +22,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--smoke", type=int, metavar="SECONDS", help="run for SECONDS, stop, and scan the log for ARM faults")
     parser.add_argument("--gdb", action="store_true",
                         help=f"attach gdb-multiarch to melonDS's ARM9 GDB stub on port {emulator.GDB_PORT} (enable it in melonDS first)")
+    parser.add_argument("--gdb-break", action="append", default=[], type=lambda v: int(v, 0), metavar="ADDR",
+                        help="with --gdb: log registers and a backtrace each time ADDR executes (repeatable)")
     parser.add_argument("--emulator", help="emulator command override, e.g. 'flatpak run net.kuribo64.melonDS'")
     parser.add_argument("--log-dir", type=Path, default=REPO_ROOT / "emulator-logs")
     args = parser.parse_args(argv)
     try:
-        result = emulator.launch(args.rom, args.log_dir, smoke_seconds=args.smoke, gdb=args.gdb, emulator=args.emulator)
+        result = emulator.launch(args.rom, args.log_dir, smoke_seconds=args.smoke, gdb=args.gdb or bool(args.gdb_break),
+                                 emulator=args.emulator, breakpoints=tuple(args.gdb_break))
     except (FileNotFoundError, RuntimeError) as error:
         print(f"launcher: {error}", file=sys.stderr)
         return 2

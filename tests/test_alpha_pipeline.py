@@ -56,7 +56,7 @@ class PipelineTests(unittest.TestCase):
 
     def request(self, seed: str = "example-seed", **overrides) -> pipeline.BuildRequest:
         type(self).counter += 1
-        fields = dict(rom=self.white, seed=seed, auxiliary={"black2": self.black, "w2u": self.checkout},
+        fields = dict(rom=self.white, seed=seed, auxiliary={"w2u": self.checkout},
                       output_dir=self.tmp / f"out {self.counter}", workroot_base=self.tmp / "work", pins_dir=self.pins,
                       species_max=1023, options={"builder": "mock", "patch_pins": sw.patch_pins(self.facts)})
         fields.update(overrides)
@@ -171,14 +171,83 @@ class PipelineTests(unittest.TestCase):
         stray = self.checkout / "stray.txt"
         stray.write_text("untracked")
         try:
-            req = self.request("", settings_path=bad_settings, auxiliary={"w2u": self.checkout})
+            req = self.request("", settings_path=bad_settings, auxiliary={})
             with self.assertRaises(BuildError) as ctx:
                 pipeline.run(req)
         finally:
             stray.unlink()
         message = str(ctx.exception)
-        for fragment in ("--seed", "keep_type_themes", "missing auxiliary input --black2"):
+        for fragment in ("--seed", "keep_type_themes", "missing required input --w2u"):
             self.assertIn(fragment, message)
+
+    def test_single_rom_selects_white2_without_black2(self) -> None:
+        req = self.request("single")
+        result = pipeline.run(req)
+        manifest = result["manifest"]
+        self.assertEqual((manifest["adapter"]["id"], manifest["identity"]["fingerprint"]), ("gen5.white2", "gen5-white2"))
+        self.assertEqual(manifest["provenance"]["auxiliary_sha256"], {})
+        self.assertEqual(result["verification"]["structural_verification"], "passed")
+
+    def test_optional_black2_is_verified_when_supplied(self) -> None:
+        result = pipeline.run(self.request("with-b2", auxiliary={"w2u": self.checkout, "black2": self.black}))
+        self.assertEqual(set(result["manifest"]["provenance"]["auxiliary_sha256"]), {"black2"})
+        modified = self.tmp / "modified black 2.nds"
+        data = bytearray(self.black.read_bytes())
+        data[-1] ^= 1
+        modified.write_bytes(bytes(data))
+        self.assertRefused("auxiliary black2: status=recognized_modified", auxiliary={"w2u": self.checkout, "black2": modified})
+        self.assertRefused("does not take inputs", auxiliary={"w2u": self.checkout, "bogus": self.black})
+
+    def test_refusals_happen_before_workspace_creation(self) -> None:
+        platinum = self.tmp / "platinum.nds"
+        platinum.write_bytes(sw.build_rom(game_code=b"CPUE", arm9=arm9.synthetic_arm9(), files={"x": b"y"}))
+        modified = self.tmp / "modified white 2.nds"
+        data = bytearray(self.white.read_bytes())
+        data[100000 % len(data)] ^= 1
+        modified.write_bytes(bytes(data))
+        unknown = self.tmp / "unknown.bin"
+        unknown.write_bytes(b"\x00" * 8192)
+        for rom, fragment in ((self.black, "support=recognized"), (platinum, "recognized_unverified"),
+                              (modified, "recognized_modified"), (unknown, "status=unknown")):
+            with self.subTest(fragment=fragment):
+                base = self.tmp / f"never created {fragment}"
+                before = rom.read_bytes()
+                req = self.request(rom=rom, workroot_base=base)
+                with self.assertRaises(BuildError) as ctx:
+                    pipeline.run(req)
+                self.assertIn(fragment, str(ctx.exception))
+                self.assertFalse(base.exists(), "no workspace may be created for a refused ROM")
+                self.assertFalse(req.output_dir.exists())
+                self.assertEqual(rom.read_bytes(), before)
+
+    def test_black2_target_guard(self) -> None:
+        from b2er.assembly import builders
+        original = builders.MockBuilder.build
+
+        def build_and_run_black2_target(self_builder, workroot_path, w2u):
+            out = original(self_builder, workroot_path, w2u)
+            (w2u / "build-alpha" / "black2upgrade-data.tar.gz").write_bytes(b"synthetic")
+            return out
+
+        builders.MockBuilder.build = build_and_run_black2_target
+        try:
+            self.assertRefused("a Black 2 package target ran")
+        finally:
+            builders.MockBuilder.build = original
+        for path in (self.tmp / "work").iterdir():
+            workroot.remove(path, self.tmp / "work")
+
+    def test_cli_single_rom_argument(self) -> None:
+        cli = [sys.executable, "-I", str(REPO_ROOT / "scripts" / "b2er_cli.py"), "--pins-dir", str(self.pins), "build"]
+        for extra in ([], [str(self.white), "--rom", str(self.white)]):
+            out = subprocess.run(cli + extra + ["--seed", "x"], capture_output=True, text=True)
+            self.assertEqual(out.returncode, 2, out.stderr)
+        out = subprocess.run(cli + [str(self.black), "--seed", "x", "--w2u", str(self.checkout), "--species-max", "1023",
+                                    "--builder", "mock", "--workroot-base", str(self.tmp / "cli never")],
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("support=recognized", out.stderr)
+        self.assertFalse((self.tmp / "cli never").exists())
 
     def test_dirty_checkout_rejected(self) -> None:
         stray = self.checkout / "stray.txt"

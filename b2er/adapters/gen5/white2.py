@@ -31,8 +31,13 @@ class White2Adapter(Gen5Adapter):
     version = "0.1.0"
     display_name = "Pokémon White Version 2 (USA/Europe, IRDO) on the W2U expanded engine"
     fingerprints = ("gen5-white2",)
-    auxiliary_inputs = {"black2": "clean Black 2 ROM (required by the W2U build)",
-                        "w2u": "clean W2U-Project checkout at the pinned commit with swan initialized"}
+    auxiliary_inputs = {"w2u": "clean W2U-Project checkout at the pinned commit with swan initialized"}
+    optional_inputs = {"black2": "clean Black 2 ROM (optional provenance input; the White 2 ROM target never reads it)"}
+    BLACK2_PLACEHOLDER = (b"b2er placeholder - NOT A ROM.\n"
+                          b"W2U's Meson configuration requires this path to exist for its separate Black 2 package\n"
+                          b"targets. The White2Upgrade.nds target never reads it; b2er verifies no Black 2 target ran.\n")
+    BLACK2_TARGET_OUTPUTS = ("black2upgrade-data.tar.gz", "black2upgrade-package-manifest.json",
+                             "src/black2upgrade-compatibility.json", "black2upgrade-artifacts")
 
     def capabilities(self):
         return {
@@ -84,8 +89,14 @@ class White2Adapter(Gen5Adapter):
         staged = stage.stage_w2u(Path(ctx.auxiliary["w2u"]), w2u, swan["path"])
         port = ctx.workspace / "Port-Pokeweb"
         port.mkdir()
-        for source, name in ((ctx.rom, "cleanwhite2.nds"), (ctx.auxiliary["black2"], "cleanblack2.nds")):
-            shutil.copyfile(source, port / name)
+        shutil.copyfile(ctx.rom, port / "cleanwhite2.nds")
+        black2 = ctx.auxiliary.get("black2")
+        if black2 is not None:
+            shutil.copyfile(black2, port / "cleanblack2.nds")
+        else:
+            (port / "cleanblack2.nds").write_bytes(self.BLACK2_PLACEHOLDER)
+        ctx.state["black2_input"] = "approved clean ROM" if black2 is not None else "placeholder (not a ROM)"
+        for name in ("cleanwhite2.nds", "cleanblack2.nds"):
             (port / name).chmod(stat.S_IRUSR | stat.S_IRGRP)
         base = stage.extract_base((port / "cleanwhite2.nds").read_bytes(), ctx.workspace / "IRDO_Extracted")
         pins = ctx.options.get("patch_pins") or {}
@@ -170,8 +181,13 @@ class White2Adapter(Gen5Adapter):
         builder = (builders.MockBuilder() if ctx.options.get("builder") == "mock" else
                    builders.W2UMesonBuilder(meson.get("commit"), ctx.options.get("meson_source"), ctx.options.get("java"),
                                             ctx.options.get("jobs")))
-        ctx.say(f"assembling with {builder.name}")
-        return builder.build(ctx.workspace, ctx.state["w2u"]).read_bytes()
+        ctx.say(f"assembling with {builder.name} (Black 2 input: {ctx.state.get('black2_input')})")
+        rom = builder.build(ctx.workspace, ctx.state["w2u"]).read_bytes()
+        build_dir = ctx.state["w2u"] / "build-alpha"
+        ran = [name for name in self.BLACK2_TARGET_OUTPUTS if (build_dir / name).exists()]
+        if ran:
+            raise BuildError(f"a Black 2 package target ran during the White 2 build: {ran}")
+        return rom
 
     def site_patches(self, ctx, model: GameModel) -> list[dict]:
         found = ctx.state.get("sites") or {}

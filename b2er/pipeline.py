@@ -93,10 +93,14 @@ def run(req: BuildRequest) -> dict:
                          + "; ".join(identity.diagnostics or ["the identified release is recognized only"]))
     adapter = registry.get(identity.adapter)
     aux_identities = {}
-    for name, description in adapter.auxiliary_inputs.items():
+    unexpected = sorted(set(req.auxiliary) - set(adapter.auxiliary_inputs) - set(adapter.optional_inputs))
+    if unexpected:
+        problems.append(f"{adapter.id} does not take inputs {unexpected}")
+    for name in list(adapter.auxiliary_inputs) + list(adapter.optional_inputs):
         path = req.auxiliary.get(name)
         if path is None:
-            problems.append(f"missing auxiliary input --{name} ({description})")
+            if name in adapter.auxiliary_inputs:
+                problems.append(f"missing required input --{name} ({adapter.auxiliary_inputs[name]})")
         elif Path(path).is_file():
             aux = identify.identify(path, adapters=registry, pins=pins_inputs)
             aux_identities[name] = aux
