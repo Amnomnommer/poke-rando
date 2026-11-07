@@ -99,16 +99,18 @@ class White2Adapter(Gen5Adapter):
         for name in ("cleanwhite2.nds", "cleanblack2.nds"):
             (port / name).chmod(stat.S_IRUSR | stat.S_IRGRP)
         builder = ctx.options.get("builder", "w2u")
+        ctrmap_report: dict = {}
         if builder == "mock":
             # The mock builder never runs CTRMap, so arm9i.bin is staged raw; real builds use the pinned CTRMap.
             provider = lambda components: components["arm9i.bin"]  # noqa: E731
         else:
             provider = lambda components: ctrmap_dsi.ctrmap_arm9i(  # noqa: E731
-                port / "cleanwhite2.nds", w2u / w2u_sdk.JAR, ctx.workspace / "ctrmap-dsi", components, ctx.options.get("java"))
+                port / "cleanwhite2.nds", w2u / w2u_sdk.JAR, ctx.workspace / "ctrmap-dsi", components, ctx.options.get("java"),
+                original=ctx.rom, report=ctrmap_report)
         base = stage.extract_base((port / "cleanwhite2.nds").read_bytes(), ctx.workspace / "IRDO_Extracted", provider)
         pins = ctx.options.get("patch_pins") or {}
         report = {
-            "staged": staged, "base": base,
+            "staged": staged, "base": base, "ctrmap_dsi": ctrmap_report or {"skipped": "mock builder or NTR-only ROM"},
             "main_menu_skip": patches.remove_main_menu_skip(w2u, pins.get("meson_build", patches.MESON_BUILD_SHA256),
                                                             pins.get("main_menu_skip", patches.MAIN_MENU_SKIP_SHA256)),
             "pmc_arm9": patches.repair_pmc_arm9(w2u, pins.get("pmc_arm9", patches.PMC_ARM9_SHA256)),
