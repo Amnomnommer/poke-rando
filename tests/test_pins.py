@@ -70,9 +70,17 @@ class PinTests(unittest.TestCase):
         for document in (self.inputs, self.upstream):
             for value in keyed_values(document, "sha256"):
                 self.assertRegex(value, SHA256)
-            for value in keyed_values(document, "commit"):
-                if isinstance(value, str):
-                    self.assertRegex(value, COMMIT)
+            for key in ("commit", "tag_object"):
+                for value in keyed_values(document, key):
+                    if isinstance(value, str):
+                        self.assertRegex(value, COMMIT)
+
+    def test_meson_tag_resolved_to_peeled_commit(self) -> None:
+        meson = {entry["id"]: entry for entry in self.upstream["source_dependencies"]}["meson"]
+        self.assertEqual(meson["tag"], "1.7.0")
+        self.assertEqual(meson["tag_object"], "349d269ff915635af5b1048760eb2f0d5af2d002")
+        self.assertEqual(meson["commit"], "897b6fcdf9adfa87fe60f420e1b483f0f49af7a3")
+        self.assertIn("ls-remote", meson["commit_evidence"])
 
     def test_unresolved_fields_are_explicit(self) -> None:
         fields = list(status_fields(self.inputs)) + list(status_fields(self.upstream))

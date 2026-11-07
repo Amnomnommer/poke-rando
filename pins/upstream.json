@@ -58,11 +58,9 @@
       "storage": "fetched-by-upstream-makefile",
       "repository": "https://github.com/mesonbuild/meson",
       "tag": "1.7.0",
-      "commit": {
-        "status": "unresolved",
-        "value": null,
-        "reason": "Upstream Makefile clones by tag only; the tag's commit has not been audited."
-      }
+      "tag_object": "349d269ff915635af5b1048760eb2f0d5af2d002",
+      "commit": "897b6fcdf9adfa87fe60f420e1b483f0f49af7a3",
+      "commit_evidence": "git ls-remote of the official repository: refs/tags/1.7.0 is annotated tag object 349d269f, peeling (refs/tags/1.7.0^{}) to this commit (R-003, November 6, 2026). Meson was not downloaded or vendored."
     }
   ],
   "python_requirements": {

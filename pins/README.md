@@ -10,7 +10,7 @@ Machine-readable identifiers for every external input the recovery build depends
 ## Conventions
 
 - `schema_version` is an integer; bump it on any incompatible field change.
-- SHA-256 values are 64 lowercase hex characters. Git commits are 40 lowercase hex characters.
+- SHA-256 values are 64 lowercase hex characters. Git commits and tag objects are 40 lowercase hex characters (`tag_object` records an annotated tag; `commit` is always the peeled commit).
 - `path` values are relative to the root of the user's local W2U checkout, not to this repository.
 - A value that has not been audited is never guessed. It is written as an explicit unresolved field:
 
@@ -26,3 +26,4 @@ Machine-readable identifiers for every external input the recovery build depends
 - W2U stays external. The recovery tool will verify a user-supplied local checkout against `upstream.json`. It does not clone upstream automatically, and nothing from upstream is copied here.
 - Only the two approved clean-ROM hashes may appear in `inputs.json` (see `CONTRIBUTING.md`).
 - `tests/test_pins.py` checks the structure and the approved values.
+- `scripts/verify_w2u_checkout.py` verifies a local checkout against `upstream.json`; see [`docs/w2u-checkout-verifier.md`](../docs/w2u-checkout-verifier.md).
