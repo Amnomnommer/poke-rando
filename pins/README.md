@@ -26,4 +26,5 @@ Machine-readable identifiers for every external input the recovery build depends
 - W2U stays external. The recovery tool will verify a user-supplied local checkout against `upstream.json`. It does not clone upstream automatically, and nothing from upstream is copied here.
 - Only the two approved clean-ROM hashes may appear in `inputs.json` (see `CONTRIBUTING.md`).
 - `tests/test_pins.py` checks the structure and the approved values.
+- `scripts/verify_rom_inputs.py` verifies the two local clean ROMs against `inputs.json`; see [`docs/rom-input-verifier.md`](../docs/rom-input-verifier.md).
 - `scripts/verify_w2u_checkout.py` verifies a local checkout against `upstream.json`; see [`docs/w2u-checkout-verifier.md`](../docs/w2u-checkout-verifier.md).
