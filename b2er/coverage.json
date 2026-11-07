@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "description": "Engine families and per-release support status. A status applies only to the exact listed release (game code + approved clean hash). Any other release of a title is at most 'recognized'. Statuses are evidence-backed claims and must never be raised without that evidence.",
+  "families": {
+    "gb": {"name": "Game Boy / Game Boy Color engine", "platforms": ["gb"], "generations": [1, 2], "module": "b2er.families.gb",
+           "shared": "cartridge header/global checksum validation and refresh",
+           "next": "bank-addressed data tables (species, moves, encounters, trainers) and save layout per revision; expansion requires a new species/save architecture beyond 8-bit IDs"},
+    "gba": {"name": "Game Boy Advance Generation III engine", "platforms": ["gba"], "generations": [3], "module": "b2er.families.gba",
+            "shared": "cartridge header validation and complement-checksum refresh; BIOS LZ77 codec",
+            "next": "pointer-located data tables per revision; free-space allocation for expansion"},
+    "nds-gen4": {"name": "Nintendo DS Generation IV engine", "platforms": ["nds"], "generations": [4], "module": "b2er.families.nds_gen4",
+                 "shared": "NDS header/FNT/FAT/overlays/ARM9 and strict NARC (shared with Generation V)",
+                 "next": "Generation IV archive identities and encounter/trainer/personal codecs per game"},
+    "nds-gen5": {"name": "Nintendo DS Generation V engine", "platforms": ["nds"], "generations": [5], "module": "b2er.adapters.gen5",
+                 "shared": "NDS container, NARC, Generation V encounter/trainer codecs, script disassembler, W2U-backed expansion",
+                 "next": "Black/White and Black 2 build paths (W2U provides a White 2 ROM build only)"},
+    "ctr-gen6": {"name": "Nintendo 3DS Generation VI engine", "platforms": ["3ds"], "generations": [6], "module": "b2er.families.ctr",
+                 "shared": "NCSD/NCCH header and crypto-state inspection; strict GARC archive codec",
+                 "next": "decrypted RomFS/ExeFS extraction and rebuild, then per-game GARC identities"},
+    "ctr-gen7": {"name": "Nintendo 3DS Generation VII engine", "platforms": ["3ds"], "generations": [7], "module": "b2er.families.ctr",
+                 "shared": "NCSD/NCCH header and crypto-state inspection; strict GARC archive codec",
+                 "next": "decrypted RomFS/ExeFS extraction and rebuild, then per-game GARC identities"}
+  },
+  "pinned_releases": [
+    {"id": "white2-irdo-approved", "fingerprint": "gen5-white2", "game_code": "IRDO", "approved_input": "white2",
+     "adapter": "gen5.white2", "status": "buildable",
+     "evidence": "approved clean SHA-256; W2U-backed rebuild, structural and semantic verification (synthetic and mock end-to-end tests)",
+     "missing_for_next_status": "feature-complete needs #1024/#1025, hidden items, shops and save-format expansion; runtime-validated needs the first-play checklist"},
+    {"id": "black2-ireo-approved", "fingerprint": "gen5-black2", "game_code": "IREO", "approved_input": "black2",
+     "adapter": "gen5.black2", "status": "recognized",
+     "evidence": "approved clean SHA-256 (used as a W2U build input)",
+     "missing_for_next_status": "a Black 2 ROM build path"}
+  ]
+}
