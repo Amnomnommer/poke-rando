@@ -65,7 +65,7 @@ These are the project’s release-driving requirements, in priority order:
 6. Remain stable through a complete playthrough.
 7. Convert every major battle to Doubles.
 
-The core is not complete. Random starter/item/wild/trainer generation is not implemented in the current `.0873` runtime candidate.
+The core is not complete. Random starter/item/wild/trainer generation was not implemented in the last known `.0873` diagnostic design.
 
 ## 4. Deferred Stretch Goals
 
