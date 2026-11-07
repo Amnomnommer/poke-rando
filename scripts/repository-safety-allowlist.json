@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "description": "Project-original binary files above the repository-safety size limit, pinned by exact path and SHA-256. Each entry needs a reason. Never list ROMs, extracted game data, upstream files, or generated ROM output.",
+  "binaries": []
+}

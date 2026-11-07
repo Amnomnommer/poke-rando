@@ -1,7 +1,7 @@
 # R-001 — Pinned Upstream Audit and Recovery Scaffold Proposal
 
 **Ticket:** [#1](https://github.com/Amnomnommer/poke-rando/issues/1)
-**Audit date:** November 7, 2026
+**Audit date:** November 6, 2026 (America/Phoenix)
 **Scope:** audit and planning only. No upstream code imported, no ROM bytes used, no runtime fixes.
 
 Evidence labels used throughout:
