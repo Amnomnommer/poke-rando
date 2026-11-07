@@ -177,7 +177,7 @@ def run(req: BuildRequest) -> dict:
             "capabilities": {c.value: dynamic[c].to_json() for c in settings_mod.requested_capabilities(settings)},
             "experimental_capabilities": experimental,
             "unsupported_capabilities": sorted(c.value for c, s in dynamic.items() if s.level == caps.Level.UNSUPPORTED),
-            "transformations": {"prepare": {k: v for k, v in prepared.items() if k in ("main_menu_skip", "pmc_arm9", "posix_shell", "rombuilder_guard", "base", "ctrmap_dsi")},
+            "transformations": {"prepare": {k: v for k, v in prepared.items() if k in ("main_menu_skip", "pmc_arm9", "posix_shell", "rombuilder_guard", "narc_premerge", "base", "ctrmap_dsi")},
                                 "source_changes": applied, "features": plan["features"],
                                 "script_patches": len(post.get("script_patches", [])), "arm9": post.get("arm9")},
             "output": {"file": f"{label}.nds", "sha256": output_sha, "size_bytes": len(rom)},

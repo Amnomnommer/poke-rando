@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import shutil
 import stat
 import subprocess
@@ -9,7 +11,7 @@ import sys
 from pathlib import Path
 
 from ... import w2u_checkout
-from ...assembly import BuildError, builders, ctrmap_dsi, patches, prereqs, stage, w2u_sdk
+from ...assembly import BuildError, builders, ctrmap_dsi, narc_premerge, patches, prereqs, stage, w2u_sdk
 from ...assembly.builders import encode_encounter_document, trainer_labels
 from ...gamedata import trainer_codec
 from ...capabilities import Capability as C, Level, Support, unsupported
@@ -119,6 +121,7 @@ class White2Adapter(Gen5Adapter):
             "posix_shell": patches.make_shell_portable(w2u, pins.get("bash_arithmetic_sites")),
             "rombuilder_guard": patches.guard_rombuilder(w2u, Path(__file__).resolve().parents[3],
                                                          ctx.workspace / "IRDO_Extracted" / "header.bin"),
+            "narc_premerge": patches.premerge_narcs(w2u, Path(__file__).resolve().parents[3]),
         }
         ctx.state["w2u"] = w2u
         ctx.say(f"staged W2U ({staged['files']} files); removed {len(report['main_menu_skip']['removed_files'])} "
@@ -311,6 +314,24 @@ class White2Adapter(Gen5Adapter):
         if post.get("script_patches"):
             problems = site_tools.verify_patches(rom, post["script_patches"])
             check("script_patches_present", not problems, f"{len(post['script_patches'])} patches; {problems[:3]}")
+        merge_report = ctx.state["w2u"] / patches.NARC_PREMERGE_WORK / narc_premerge.REPORT
+        if ctx.options.get("builder", "w2u") == "mock" and not merge_report.exists():
+            check("narc_extents_exact", True, "mock builder: no CTRMap .arc overlays merged")
+        else:
+            try:
+                merged = json.loads(merge_report.read_text(encoding="utf-8"))["merged"]
+                bad = []
+                for entry in merged:
+                    stored = rom.read_path(entry["path"].removeprefix("data/"))
+                    if len(stored) != entry["merged_size"] or hashlib.sha256(stored).hexdigest() != entry["sha256"]:
+                        bad.append(f"{entry['path']}: ROM stores {len(stored)} bytes, merged NARC is {entry['merged_size']}")
+                    else:
+                        narc_premerge.narc_extent(stored, entry["path"])
+                check("narc_extents_exact", not bad,
+                      f"{len(merged)} rebuilt NARCs stored exactly (declared == FAT extent); "
+                      f"{sum(e['stale_tail_avoided'] for e in merged)} stale base-archive bytes avoided" if not bad else "; ".join(bad[:5]))
+            except (OSError, ValueError, KeyError, FormatError, narc_premerge.PremergeError) as error:
+                check("narc_extents_exact", False, f"NARC pre-merge record unusable: {error}")
         passed = all(c["status"] == "pass" for c in checks)
         return {"build_completed": True, "structural_verification": "passed" if passed else "failed",
                 "runtime_acceptance": "not yet performed", "checks": checks}
