@@ -1,0 +1,16 @@
+name: Repository safety
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  prohibit-game-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject proprietary or generated game data
+        run: bash scripts/check-repository-safety.sh
