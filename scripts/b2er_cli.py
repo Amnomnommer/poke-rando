@@ -88,6 +88,21 @@ def cmd_build(args) -> int:
     return 0
 
 
+def cmd_diagnose_resources(args) -> int:
+    from b2er import runtime_identity
+    report = runtime_identity.report(args.clean, args.rebuilt)
+    text = json.dumps(report, indent=1, sort_keys=True)
+    if args.output:
+        if args.output.exists():
+            print(f"refusing to overwrite {args.output}", file=sys.stderr)
+            return 2
+        args.output.write_text(text + "\n", encoding="utf-8")
+        print(f"wrote {args.output} (numbers, sizes and hashes only; no ROM bytes, text or save data)")
+    else:
+        print(text)
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="b2er", description=__doc__.splitlines()[0])
     parser.add_argument("--pins-dir", type=Path, default=REPO_ROOT / "pins", help=argparse.SUPPRESS)
@@ -96,6 +111,11 @@ def main(argv=None) -> int:
     p.add_argument("rom", type=Path)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_identify)
+    p = sub.add_parser("diagnose-resources", help="read-only clean vs rebuilt resource-identity report (JSON)")
+    p.add_argument("clean", type=Path)
+    p.add_argument("rebuilt", type=Path)
+    p.add_argument("--output", type=Path)
+    p.set_defaults(func=cmd_diagnose_resources)
     p = sub.add_parser("capabilities", help="per family/title/release support status and capability levels")
     p.add_argument("--json", action="store_true")
     p.add_argument("--verbose", action="store_true", help="list every capability level per title")

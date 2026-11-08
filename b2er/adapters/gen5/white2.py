@@ -170,6 +170,15 @@ class White2Adapter(Gen5Adapter):
         return caps
 
     def resolve_diagnostic_area(self, model: GameModel) -> tuple[int, dict]:
+        # Runtime evidence (melonDS, diagnostic ROM ee123785...): Route 19 showed W2U's own record 128 (all
+        # Gible L100) while this species-signature heuristic had selected record 129. The game picks records
+        # through the zone header table, whose layout is not yet proven here, so the mode is refused instead
+        # of producing a fixture the verifier would check in the wrong record.
+        raise BuildError("REFUSED: diagnostic Route 19 mode is disabled: the zone -> encounter mapping is unproven "
+                         "(the signature heuristic selected record 129; the game loaded W2U record 128 on Route 19). "
+                         "Run `./b2er.sh diagnose-resources CLEAN.nds REBUILT.nds --output report.json` and return the JSON.")
+
+    def _signature_area_unused(self, model: GameModel) -> tuple[int, dict]:  # kept for the record; never called
         matches = []
         for area in model.encounters:
             if len(area.seasons) != enc.SEASONS:
@@ -314,6 +323,14 @@ class White2Adapter(Gen5Adapter):
         if post.get("script_patches"):
             problems = site_tools.verify_patches(rom, post["script_patches"])
             check("script_patches_present", not problems, f"{len(post['script_patches'])} patches; {problems[:3]}")
+        try:  # the game resolves archives by numeric FAT file ID: the verified paths must keep the clean IDs
+            clean_rom = Rom(Path(ctx.rom).read_bytes())
+            moved = [f"{p}: clean ID {clean_rom.file_id(p)}, rebuilt ID {rom.file_id(p)}"
+                     for p in (ENCOUNTER_ARCHIVE, TRDATA_ARCHIVE, TRPOKE_ARCHIVE) if clean_rom.file_id(p) != rom.file_id(p)]
+            check("runtime_archive_identity", not moved,
+                  "encounter/trainer archives keep their clean numeric file IDs" if not moved else "; ".join(moved))
+        except FormatError as error:
+            check("runtime_archive_identity", False, str(error))
         merge_report = ctx.state["w2u"] / patches.NARC_PREMERGE_WORK / narc_premerge.REPORT
         if ctx.options.get("builder", "w2u") == "mock" and not merge_report.exists():
             check("narc_extents_exact", True, "mock builder: no CTRMap .arc overlays merged")
