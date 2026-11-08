@@ -211,3 +211,51 @@ def premerge_narcs(root: Path, repo: Path) -> dict:
     script.write_text(NARC_PREMERGE_TEMPLATE.format(repo=str(Path(repo).resolve()), work=NARC_PREMERGE_WORK), encoding="utf-8")
     return {"inserted_before": "ROMBuilder", "script": NARC_PREMERGE_SCRIPT, "work": NARC_PREMERGE_WORK,
             "meson_build_sha256_after": sha256(new_text.encode("utf-8"))}
+
+
+# --- W2U wild-battle setup hook (player-name corruption) -------------------------------------------
+# Proven at runtime (melonDS GDB, five wild encounters): before W2U's hook at BtlSetup_SetWildNormal+0x3A,
+# setup+0x34 points to the player info (UTF-16 "A", 0xFFFF); after it, setup+0x34 equals setup+0x24 (the
+# party). Battle messages that print the player's name (e.g. throwing a Poke Ball) then read party data.
+# No W2U code reads setup+0x34; the hook's only required work is replaying the two instructions its
+# branch-link displaced. The correction drops the two offending instructions in the staged copy only.
+WILD_SETUP_HOOK = "src/battle_setup_patch.s"
+WILD_SETUP_HOOK_SHA256 = "1d386e4d79ec8a930f374f3a6ed3679d1de593f3f35ecb5c4a720af28e3469ea"
+WILD_SETUP_LABEL = "THUMB_BRANCH_LINK_BtlSetup_SetWildNormal_0x3A:\n"
+WILD_SETUP_OFFENDING = "    ldr r1, [r4, #0x24]\n    str r1, [r4, #0x34]\n"
+WILD_SETUP_REPLAY = "    ldr r0, [sp, #0x20]\n    movs r7, #0\n    bx lr\n"
+WILD_SETUP_CORRECTION = ("    @ b2er: removed `ldr r1, [r4, #0x24]` / `str r1, [r4, #0x34]`, which replaced the player-info\n"
+                         "    @ pointer at setup+0x34 with the party pointer (wild-battle player-name corruption).\n")
+# Thumb encodings (checked with llvm-mc -triple=thumbv5te): ldr r1,[r4,#0x24]=616A str r1,[r4,#0x34]=6163
+# ldr r0,[sp,#0x20]=0898 movs r7,#0=0027 bx lr=7047.
+WILD_SETUP_PREIMAGE_CODE = bytes.fromhex("616a6163" "08980027" "7047")
+WILD_SETUP_CORRECTED_CODE = bytes.fromhex("08980027" "7047")
+
+
+def repair_wild_setup_hook(root: Path, pinned: str | None = WILD_SETUP_HOOK_SHA256) -> dict:
+    path = root / WILD_SETUP_HOOK
+    text = _expect(path, pinned).decode("utf-8")
+    site = WILD_SETUP_LABEL + WILD_SETUP_OFFENDING
+    body = text[text.find(site) + len(site):] if site in text else ""
+    if text.count(WILD_SETUP_LABEL) != 1 or text.count(site) != 1 or text.count(WILD_SETUP_OFFENDING) != 1:
+        raise BuildError(f"{WILD_SETUP_HOOK}: the wild-setup hook site is missing or changed; refusing to patch")
+    replay_at = body.find(WILD_SETUP_REPLAY)
+    if replay_at < 0 or any(line.strip() and not line.strip().startswith("@") for line in body[:replay_at].splitlines()):
+        raise BuildError(f"{WILD_SETUP_HOOK}: the hook no longer replays exactly `ldr r0, [sp, #0x20]; movs r7, #0; bx lr`")
+    new_text = text.replace(site, WILD_SETUP_LABEL + WILD_SETUP_CORRECTION)
+    path.write_text(new_text, encoding="utf-8")
+    return {"file": WILD_SETUP_HOOK, "sha256_before": sha256(text.encode("utf-8")), "sha256_after": sha256(new_text.encode("utf-8")),
+            "removed": ["ldr r1, [r4, #0x24]", "str r1, [r4, #0x34]"], "kept": ["ldr r0, [sp, #0x20]", "movs r7, #0", "bx lr"],
+            "code_before": WILD_SETUP_PREIMAGE_CODE.hex(), "code_after": WILD_SETUP_CORRECTED_CODE.hex()}
+
+
+def wild_setup_code_problems(dll: bytes | None) -> list[str]:
+    """Final-ROM check: the built W2U code must contain the corrected hook and never the offending one."""
+    if dll is None:
+        return ["patches/White2Upgrade.dll is missing from the built ROM"]
+    problems = []
+    if WILD_SETUP_PREIMAGE_CODE in dll:
+        problems.append("built White2Upgrade.dll still contains `ldr r1,[r4,#0x24]; str r1,[r4,#0x34]` before the replayed code")
+    if WILD_SETUP_CORRECTED_CODE not in dll:
+        problems.append("built White2Upgrade.dll does not contain the corrected hook body (ldr r0,[sp,#0x20]; movs r7,#0; bx lr)")
+    return problems
