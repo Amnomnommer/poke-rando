@@ -77,6 +77,14 @@ SYNTHETIC_ROM_COMMAND = (
     "python3 \"$4\" --rom \"$3\"; python3 \"$5\" --rom \"$3\"',\n"
     "    'rombuilder', 'jar', 'cmproj', '@OUTPUT@', 'footer.py', 'finalize.py'],\n"
 )
+# Generated stand-in with the same hook structure as W2U's src/battle_setup_patch.s (no upstream text copied).
+SYNTHETIC_WILD_SETUP_HOOK = (
+    ".thumb\n\n.type THUMB_BRANCH_LINK_BtlSetup_SetWildNormal_0x3A, %function\n\n@ synthetic wild-setup hook\n"
+    "THUMB_BRANCH_LINK_BtlSetup_SetWildNormal_0x3A:\n"
+    "    ldr r1, [r4, #0x24]\n    str r1, [r4, #0x34]\n\n    @ replay\n"
+    "    ldr r0, [sp, #0x20]\n    movs r7, #0\n    bx lr\n\n"
+    "    .size THUMB_BRANCH_LINK_BtlSetup_SetWildNormal_0x3A, . - THUMB_BRANCH_LINK_BtlSetup_SetWildNormal_0x3A\n"
+)
 SYNTHETIC_ARM9I = bytes((i * 31 + 7) & 0xFF for i in range(0x5000))
 SYNTHETIC_ARM7I = bytes((i * 17 + 3) & 0xFF for i in range(0x1800))
 
@@ -248,6 +256,7 @@ def make_checkout(root: Path) -> dict:
                                "rom = custom_target(\n  input: [\n    main_menu_skip_patch,\n    other,\n  ],\n"
                                + SYNTHETIC_ROM_COMMAND + ")\n")
     write(root, "data/graphics/meson.build", GRAPHICS_MESON)
+    write(root, "src/battle_setup_patch.s", SYNTHETIC_WILD_SETUP_HOOK)
     write(root, "White2Upgrade.cmproj.example", "LastROMPath: \"\"\nVFSBase: ../IRDO_Extracted\nVFSOverlay: vfs\n")
     plugin = b"synthetic development plugin"
     write(root, "MainMenuSkip(1).dll", plugin)
@@ -274,7 +283,8 @@ def make_checkout(root: Path) -> dict:
             "meson_sha256": hashlib.sha256((root / "meson.build").read_bytes()).hexdigest(),
             "cmproj_sha256": hashlib.sha256((root / "White2Upgrade.cmproj.example").read_bytes()).hexdigest(),
             "plugin_sha256": hashlib.sha256(plugin).hexdigest(),
-            "graphics_meson_sha256": hashlib.sha256(GRAPHICS_MESON.encode()).hexdigest()}
+            "graphics_meson_sha256": hashlib.sha256(GRAPHICS_MESON.encode()).hexdigest(),
+            "wild_setup_sha256": hashlib.sha256(SYNTHETIC_WILD_SETUP_HOOK.encode()).hexdigest()}
 
 
 def synthetic_jar() -> bytes:
@@ -375,4 +385,5 @@ def make_pins(directory: Path, facts: dict, white: Path, black: Path) -> Path:
 def patch_pins(facts: dict) -> dict:
     return {"meson_build": facts["meson_sha256"], "pmc_arm9": facts["arm9_sha256"], "cmproj_example": facts["cmproj_sha256"],
             "main_menu_skip": facts["plugin_sha256"],
-            "bash_arithmetic_sites": {"data/graphics/meson.build": facts["graphics_meson_sha256"]}}
+            "bash_arithmetic_sites": {"data/graphics/meson.build": facts["graphics_meson_sha256"]},
+            "wild_setup_hook": facts["wild_setup_sha256"]}

@@ -121,6 +121,7 @@ class White2Adapter(Gen5Adapter):
             "rombuilder_guard": patches.guard_rombuilder(w2u, Path(__file__).resolve().parents[3],
                                                          ctx.workspace / "IRDO_Extracted" / "header.bin"),
             "narc_premerge": patches.premerge_narcs(w2u, Path(__file__).resolve().parents[3]),
+            "wild_setup_hook": patches.repair_wild_setup_hook(w2u, pins.get("wild_setup_hook", patches.WILD_SETUP_HOOK_SHA256)),
         }
         ctx.state["w2u"] = w2u
         ctx.say(f"staged W2U ({staged['files']} files); removed {len(report['main_menu_skip']['removed_files'])} "
@@ -342,6 +343,14 @@ class White2Adapter(Gen5Adapter):
                   else f"{len(changed)} zones changed records (first {changed[:5]}); tables {len(before)}/{len(after)}")
         except FormatError as error:
             check("zone_encounter_mapping_preserved", False, str(error))
+        if ctx.options.get("builder", "w2u") == "mock":
+            check("wild_setup_hook_corrected", True, "mock builder: staged source corrected; no W2U code is assembled")
+        else:
+            paths = rom.paths()
+            dll = rom.read_path("patches/White2Upgrade.dll") if "patches/White2Upgrade.dll" in paths else None
+            problems = patches.wild_setup_code_problems(dll)
+            check("wild_setup_hook_corrected", not problems,
+                  "built code keeps setup+0x34 (no ldr r1,[r4,#0x24]; str r1,[r4,#0x34])" if not problems else "; ".join(problems))
         merge_report = ctx.state["w2u"] / patches.NARC_PREMERGE_WORK / narc_premerge.REPORT
         if ctx.options.get("builder", "w2u") == "mock" and not merge_report.exists():
             check("narc_extents_exact", True, "mock builder: no CTRMap .arc overlays merged")
