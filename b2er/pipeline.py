@@ -144,7 +144,7 @@ def run(req: BuildRequest) -> dict:
         refused = caps.check(dynamic, settings_mod.requested_capabilities(settings))
         if refused:
             raise BuildError("requested features unavailable for this ROM (nothing was emitted):\n  - " + "\n  - ".join(refused))
-        diagnostic = adapter.resolve_diagnostic_area(model) if settings["mode"] == "diagnostic-route19" else None
+        diagnostic = adapter.resolve_diagnostic_area(model, ctx) if settings["mode"] == "diagnostic-route19" else None
         try:
             planned, plan_obj = policy.Planner(model, settings, key, diagnostic).run()
         except policy.PlanError as error:

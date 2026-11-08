@@ -72,8 +72,27 @@ def gdb_script(port: int = GDB_PORT, breakpoints: tuple[int, ...] = ()) -> str:
     ]) + "\n"
 
 
+# W2U's battle_setup_patch.s hooks BtlSetup_SetWildNormal (pmc/Symbols.map 0x02018060, Thumb) at +0x3A with
+# `ldr r1,[r4,#0x24]; str r1,[r4,#0x34]`. Hypothesis under test: +0x34 holds the player-info pointer that
+# in-battle messages read the player name from, so the hook replaces it with the party pointer. The probe
+# logs both words and the first UTF-16 units each points to, immediately before and after the hook.
+WILD_SETUP_HOOK = 0x02018060 + 0x3A
+WILD_SETUP_AFTER = WILD_SETUP_HOOK + 4  # the hook is a 4-byte Thumb BL
+
+
+def wild_setup_probe(port: int = GDB_PORT) -> str:
+    lines = ["set pagination off", "set confirm off", "set architecture armv5te", f"target remote localhost:{port}"]
+    for label, address in (("before W2U wild-setup hook", WILD_SETUP_HOOK), ("after W2U wild-setup hook", WILD_SETUP_AFTER)):
+        lines += [f"break *0x{address:08x}", "commands", "  silent", f"  echo \\n=== {label} (0x{address:08x}) ===\\n",
+                  "  info registers r4 pc lr", "  echo setup+0x24..0x47:\\n", "  x/9wx $r4+0x24",
+                  "  echo first u16 at *(setup+0x24) [party]:\\n", "  x/8hx *(unsigned int*)($r4+0x24)",
+                  "  echo first u16 at *(setup+0x34) [player name if player info]:\\n", "  x/8hx *(unsigned int*)($r4+0x34)",
+                  "  bt 6", "  continue", "end"]
+    return "\n".join(lines + ["continue", "detach", "quit"]) + "\n"
+
+
 def launch(rom: Path, log_dir: Path, *, smoke_seconds: int | None = None, gdb: bool = False,
-           emulator: str | None = None, breakpoints: tuple[int, ...] = ()) -> SmokeResult | int:
+           emulator: str | None = None, breakpoints: tuple[int, ...] = (), probe: str | None = None) -> SmokeResult | int:
     rom = Path(rom).resolve()
     if not rom.is_file():
         raise FileNotFoundError(rom)
@@ -88,7 +107,7 @@ def launch(rom: Path, log_dir: Path, *, smoke_seconds: int | None = None, gdb: b
         gdb_process = None
         if gdb:
             script = log_dir / f"{rom.stem}-{stamp}.gdb"
-            script.write_text(gdb_script(breakpoints=breakpoints), encoding="utf-8")
+            script.write_text(wild_setup_probe() if probe == "wild-setup" else gdb_script(breakpoints=breakpoints), encoding="utf-8")
             if shutil.which("gdb-multiarch") is None:
                 handle.write(b"[launcher] gdb-multiarch not found; GDB capture skipped\n")
             else:

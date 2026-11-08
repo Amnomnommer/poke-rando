@@ -141,11 +141,13 @@ def apply_route19_fixture(containers: list[Container]) -> list[Container]:
     return result
 
 
-def verify_route19_fixture(data: bytes) -> list[str]:
-    """Return problems with a finished-ROM Route 19 record; empty means the fixture is exact."""
+def verify_route19_fixture(data: bytes, seasons: int = SEASONS) -> list[str]:
+    """Return problems with a finished-ROM Route 19 record; empty means the fixture is exact.
+
+    `seasons` is the container count of the record the game maps to Route 19 in the clean ROM (1 for White 2)."""
     problems = []
-    if len(data) != CONTAINER_SIZE * SEASONS:
-        return [f"Route 19 record is {len(data)} bytes, expected {CONTAINER_SIZE * SEASONS}"]
+    if seasons not in (1, SEASONS) or len(data) != CONTAINER_SIZE * seasons:
+        return [f"Route 19 record is {len(data)} bytes, expected {CONTAINER_SIZE * seasons} ({seasons} season(s))"]
     try:
         containers = decode_record(data, "Route 19")
     except FormatError as error:
