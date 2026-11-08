@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from b2er.features.contracts import FeatureState
 from b2er.features.egg_mode import EggCandidate, EggMode, plan_egg_mode
