@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://b2er.local/schemas/randomizer-settings-v2.json",
+  "title": "B2ER pre-build settings v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": {"const": 2},
+    "quick_start": {"$ref": "#/$defs/quickStart"},
+    "supplies": {"$ref": "#/$defs/supplies"},
+    "egg_mode": {"$ref": "#/$defs/eggMode"},
+    "modern_rules": {"$ref": "#/$defs/modernRules"},
+    "battle_gimmicks": {"$ref": "#/$defs/gimmicks"},
+    "follower": {"$ref": "#/$defs/follower"},
+    "overworld_encounters": {"$ref": "#/$defs/overworld"},
+    "fast_story": {"$ref": "#/$defs/fastStory"},
+    "sprite_customization": {"$ref": "#/$defs/sprites"}
+  },
+  "$defs": {
+    "quickStart": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"}, "player_name": {"type": "string"},
+        "rival_name": {"type": "string"}, "avatar": {"type": "string"},
+        "starter_index": {"type": "integer", "minimum": 0, "maximum": 2},
+        "checkpoint": {"type": "string"}
+      }
+    },
+    "supplies": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"}, "preserve_normal_poke_balls": {"type": "boolean"},
+        "master_balls": {"type": "integer", "minimum": 0},
+        "rare_candies": {"type": "integer", "minimum": 0}
+      }
+    },
+    "eggMode": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "mode": {"enum": ["off", "starter_egg", "route_encounter_egg", "gift_eggs", "full_egg"]},
+        "hatch_cycles": {"type": "integer", "minimum": 1}
+      }
+    },
+    "modernRules": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"target": {"const": "generation_9"}, "required": {"type": "boolean"}}
+    },
+    "gimmicks": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "player_run": {"enum": ["off", "seeded", "mega", "z_move", "dynamax", "terastallize"]},
+        "bosses": {"type": "boolean"}
+      }
+    },
+    "follower": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"enabled": {"type": "boolean"}, "party_slot": {"const": 0}}
+    },
+    "overworld": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "mode": {"enum": ["random", "overworld", "mixed"]},
+        "despawn_distance": {"type": "integer", "minimum": 1},
+        "maximum_visible": {"type": "integer", "minimum": 1}
+      }
+    },
+    "fastStory": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"enabled": {"type": "boolean"}, "checkpoint": {"type": "string"}}
+    },
+    "sprites": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"enabled": {"type": "boolean"}, "catalog": {"type": "array", "items": {"type": "string"}}}
+    }
+  }
+}

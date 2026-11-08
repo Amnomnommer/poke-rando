@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://b2er.local/schemas/sprite-asset-provenance-v1.json",
+  "title": "B2ER sprite asset provenance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "assets"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["asset_id", "source_url", "creator", "permission", "license_or_permission", "art_style", "directions", "frames_per_direction"],
+        "properties": {
+          "asset_id": {"type": "string", "minLength": 1},
+          "source_url": {"type": "string", "format": "uri"},
+          "creator": {"type": "string", "minLength": 1},
+          "permission": {"enum": ["original", "open_license", "express_permission"]},
+          "license_or_permission": {"type": "string", "minLength": 1},
+          "art_style": {"type": "string", "minLength": 1},
+          "directions": {"type": "integer", "minimum": 1},
+          "frames_per_direction": {"type": "integer", "minimum": 1},
+          "species": {"type": "integer", "minimum": 1},
+          "form": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  }
+}
