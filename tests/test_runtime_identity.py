@@ -120,30 +120,286 @@ class RuntimeIdentityTests(unittest.TestCase):
         self.assertEqual(self.clean.read_bytes(), before)
 
 
+class WildSetupProbeTests(unittest.TestCase):
+    def test_probe_brackets_the_w2u_hook(self) -> None:
+        from b2er import emulator
+        script = emulator.wild_setup_probe()
+        self.assertEqual((emulator.WILD_SETUP_HOOK, emulator.WILD_SETUP_AFTER), (0x0201809A, 0x0201809E))
+        self.assertIn("break *0x0201809a", script)
+        self.assertIn("break *0x0201809e", script)
+        self.assertIn("x/8hx *(unsigned int*)($r4+0x34)", script)
+        self.assertTrue(script.rstrip().endswith("quit"))
+
+
 if __name__ == "__main__":
     unittest.main()
 
 
 class VerifierIdentityTests(unittest.TestCase):
-    def test_numeric_id_change_withholds_outputs(self) -> None:
-        from unittest import mock
+    """Writer and verifier resolve Route 19 independently; numeric FAT IDs may shift (runtime uses paths)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
         import synthetic_w2u as sw
+        cls.sw = sw
+        cls.tmp = Path(tempfile.mkdtemp())
+        cls.facts = sw.make_checkout(cls.tmp / "W2U")
+        cls.white, cls.black = sw.make_roms(cls.tmp / "roms")
+        cls.pins = sw.make_pins(cls.tmp / "pins", cls.facts, cls.white, cls.black)
+        cls.n = 0
+
+    def request(self, diagnostic=True):
         from b2er import pipeline
-        from b2er.assembly import BuildError, builders
-        tmp = Path(tempfile.mkdtemp())
-        facts = sw.make_checkout(tmp / "W2U")
-        white, black = sw.make_roms(tmp / "roms")
-        pins = sw.make_pins(tmp / "pins", facts, white, black)
+        type(self).n += 1
+        return pipeline.BuildRequest(rom=self.white, seed="ids", auxiliary={"w2u": self.tmp / "W2U"}, output_dir=self.tmp / f"out{self.n}",
+                                     workroot_base=self.tmp / f"work{self.n}", pins_dir=self.pins, species_max=1023, diagnostic=diagnostic,
+                                     options={"builder": "mock", "patch_pins": self.sw.patch_pins(self.facts)})
+
+    def test_numeric_id_shift_is_accepted_when_paths_and_zones_hold(self) -> None:
+        from unittest import mock
+        from b2er import pipeline
+        from b2er.assembly import builders
         real = builders.build_rom
 
-        def shifted(**kw):  # same paths and bytes, but an extra early file moves every later numeric ID
+        def shifted(**kw):  # an extra early file moves every later numeric ID, as W2U's added files do (+5)
             return real(**{**kw, "files": {"a/0/0/0": b"inserted", **kw["files"]}})
 
-        req = pipeline.BuildRequest(rom=white, seed="ids", auxiliary={"w2u": tmp / "W2U"}, output_dir=tmp / "out",
-                                    workroot_base=tmp / "work", pins_dir=pins, species_max=1023,
-                                    options={"builder": "mock", "patch_pins": sw.patch_pins(facts)})
+        req = self.request()
         with mock.patch.object(builders, "build_rom", shifted):
+            result = pipeline.run(req)
+        rom = Rom((req.output_dir / result["outputs"]["rom"]).read_bytes())
+        self.assertNotEqual(rom.file_id("a/1/2/7"), Rom(self.white.read_bytes()).file_id("a/1/2/7"))
+        checks = {c["name"]: c["status"] for c in result["verification"]["checks"]}
+        self.assertEqual((checks["zone_encounter_mapping_preserved"], checks["route19_runtime_mapping"]), ("pass", "pass"))
+
+    def test_writer_choice_is_not_trusted(self) -> None:
+        from unittest import mock
+        from b2er import pipeline
+        from b2er.adapters.gen5 import white2
+        from b2er.assembly import BuildError
+        real = white2.White2Adapter.resolve_diagnostic_area
+
+        def wrong(self_, model, ctx=None):  # a writer that patches the wrong record (like the old heuristic)
+            area, evidence = real(self_, model, ctx)
+            return 0, {**evidence, "area": 0}
+
+        req = self.request()
+        with mock.patch.object(white2.White2Adapter, "resolve_diagnostic_area", wrong):
             with self.assertRaises(BuildError) as ctx:
                 pipeline.run(req)
-        self.assertIn("runtime_archive_identity", str(ctx.exception))
+        self.assertIn("route19_runtime_mapping", str(ctx.exception))
+        self.assertIn("zone 437 -> record 2", str(ctx.exception))
         self.assertFalse(req.output_dir.exists())
+
+    def test_rebuilt_zone_mapping_change_is_rejected(self) -> None:
+        from unittest import mock
+        from b2er import pipeline
+        from b2er.assembly import BuildError, builders
+        real = builders.build_rom
+        moved = self.sw.synthetic_zone_table({10: 0, 11: 1, 437: 3, 12: 2, 13: 4})
+
+        def remapped(**kw):  # the ROM the game would run maps Route 19 to a record that was not patched
+            return real(**{**kw, "files": {**kw["files"], "a/0/1/2": moved}})
+
+        req = self.request()
+        with mock.patch.object(builders, "build_rom", remapped):
+            with self.assertRaises(BuildError) as ctx:
+                pipeline.run(req)
+        self.assertIn("zone_encounter_mapping_preserved", str(ctx.exception))
+        self.assertIn("route19_runtime_mapping", str(ctx.exception))
+        self.assertFalse(req.output_dir.exists())
+
+    def test_proven_mapping_for_approved_rom_is_enforced(self) -> None:
+        import hashlib
+        from unittest import mock
+        from b2er import pipeline
+        from b2er.assembly import BuildError
+        from b2er.gamedata import zones
+        self.assertEqual(zones.PROVEN_ROUTE19["3e50aec3db401332175a5d2b5fe2a68ac1a05ec63995dba9d1506b1b51837446"], (437, 128))
+        digest = hashlib.sha256(self.white.read_bytes()).hexdigest()
+        req = self.request()
+        with mock.patch.dict(zones.PROVEN_ROUTE19, {digest: (437, 128)}):
+            with self.assertRaises(BuildError) as ctx:
+                pipeline.run(req)
+        self.assertIn("proven mapping is (437, 128)", str(ctx.exception))
+
+
+class ZoneTableTests(unittest.TestCase):
+    def test_mask_none_and_one_to_one(self) -> None:
+        import synthetic_w2u as sw
+        from b2er.gamedata import zones
+        from b2er.nds import FormatError
+        table = sw.synthetic_zone_table()
+        self.assertEqual(zones.resolve(table, 5), 2)
+        indices = zones.encounter_indices(table)
+        self.assertEqual(indices[437], 2)
+        self.assertIsNone(indices[0])  # 0xDFFF (flags | 0x1FFF) is "no encounters"
+        self.assertEqual(indices[12], 3)  # 0xC000 flags are masked off
+        for records in ({10: 0, 11: 1, 437: 2, 12: 2, 13: 4}, {10: 0, 437: 2}, {10: 0, 11: 1, 437: 2, 12: 3, 13: 9}):
+            with self.assertRaises(FormatError):
+                zones.resolve(sw.synthetic_zone_table(records), 5)
+        with self.assertRaises(FormatError):
+            zones.resolve(sw.synthetic_zone_table({10: 0, 11: 1, 12: 2, 13: 3, 14: 4}), 5)  # zone 437 has none
+        with self.assertRaises(FormatError):
+            zones.zone_table(Narc([b"\x00" * 0x31]).build())
+
+    def test_fixture_season_count_follows_the_mapped_record(self) -> None:
+        one = enc.encode_record([enc.Container((1,) * 8, {(c, k): (enc.fixture_grass_slots() if (c, k) == ("GRASS", "SINGLES")
+                                                                    else [enc.Slot(504, 0, 5, 5)] * n) for c, k, n in enc.TABLES})])
+        self.assertEqual(enc.verify_route19_fixture(one, 1), [])
+        self.assertTrue(enc.verify_route19_fixture(one, 4))
+        self.assertTrue(enc.verify_route19_fixture(one * 4, 1))
+
+
+class WildSetupProbeTests(unittest.TestCase):
+    def test_probe_brackets_the_w2u_hook(self) -> None:
+        from b2er import emulator
+        script = emulator.wild_setup_probe()
+        self.assertEqual((emulator.WILD_SETUP_HOOK, emulator.WILD_SETUP_AFTER), (0x0201809A, 0x0201809E))
+        self.assertIn("break *0x0201809a", script)
+        self.assertIn("break *0x0201809e", script)
+        self.assertIn("x/8hx *(unsigned int*)($r4+0x34)", script)
+        self.assertTrue(script.rstrip().endswith("quit"))
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class VerifierIdentityTests(unittest.TestCase):
+    """Writer and verifier resolve Route 19 independently; numeric FAT IDs may shift (runtime uses paths)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import synthetic_w2u as sw
+        cls.sw = sw
+        cls.tmp = Path(tempfile.mkdtemp())
+        cls.facts = sw.make_checkout(cls.tmp / "W2U")
+        cls.white, cls.black = sw.make_roms(cls.tmp / "roms")
+        cls.pins = sw.make_pins(cls.tmp / "pins", cls.facts, cls.white, cls.black)
+        cls.n = 0
+
+    def request(self, diagnostic=True):
+        from b2er import pipeline
+        type(self).n += 1
+        return pipeline.BuildRequest(rom=self.white, seed="ids", auxiliary={"w2u": self.tmp / "W2U"}, output_dir=self.tmp / f"out{self.n}",
+                                     workroot_base=self.tmp / f"work{self.n}", pins_dir=self.pins, species_max=1023, diagnostic=diagnostic,
+                                     options={"builder": "mock", "patch_pins": self.sw.patch_pins(self.facts)})
+
+    def test_numeric_id_shift_is_accepted_when_paths_and_zones_hold(self) -> None:
+        from unittest import mock
+        from b2er import pipeline
+        from b2er.assembly import builders
+        real = builders.build_rom
+
+        def shifted(**kw):  # an extra early file moves every later numeric ID, as W2U's added files do (+5)
+            return real(**{**kw, "files": {"a/0/0/0": b"inserted", **kw["files"]}})
+
+        req = self.request()
+        with mock.patch.object(builders, "build_rom", shifted):
+            result = pipeline.run(req)
+        rom = Rom((req.output_dir / result["outputs"]["rom"]).read_bytes())
+        self.assertNotEqual(rom.file_id("a/1/2/7"), Rom(self.white.read_bytes()).file_id("a/1/2/7"))
+        checks = {c["name"]: c["status"] for c in result["verification"]["checks"]}
+        self.assertEqual((checks["zone_encounter_mapping_preserved"], checks["route19_runtime_mapping"]), ("pass", "pass"))
+
+    def test_writer_choice_is_not_trusted(self) -> None:
+        from unittest import mock
+        from b2er import pipeline
+        from b2er.adapters.gen5 import white2
+        from b2er.assembly import BuildError
+        real = white2.White2Adapter.resolve_diagnostic_area
+
+        def wrong(self_, model, ctx=None):  # a writer that patches the wrong record (like the old heuristic)
+            area, evidence = real(self_, model, ctx)
+            return 0, {**evidence, "area": 0}
+
+        req = self.request()
+        with mock.patch.object(white2.White2Adapter, "resolve_diagnostic_area", wrong):
+            with self.assertRaises(BuildError) as ctx:
+                pipeline.run(req)
+        self.assertIn("route19_runtime_mapping", str(ctx.exception))
+        self.assertIn("zone 437 -> record 2", str(ctx.exception))
+        self.assertFalse(req.output_dir.exists())
+
+    def test_rebuilt_zone_mapping_change_is_rejected(self) -> None:
+        from unittest import mock
+        from b2er import pipeline
+        from b2er.assembly import BuildError, builders
+        real = builders.build_rom
+        moved = self.sw.synthetic_zone_table({10: 0, 11: 1, 437: 3, 12: 2, 13: 4})
+
+        def remapped(**kw):  # the ROM the game would run maps Route 19 to a record that was not patched
+            return real(**{**kw, "files": {**kw["files"], "a/0/1/2": moved}})
+
+        req = self.request()
+        with mock.patch.object(builders, "build_rom", remapped):
+            with self.assertRaises(BuildError) as ctx:
+                pipeline.run(req)
+        self.assertIn("zone_encounter_mapping_preserved", str(ctx.exception))
+        self.assertIn("route19_runtime_mapping", str(ctx.exception))
+        self.assertFalse(req.output_dir.exists())
+
+    def test_proven_mapping_for_approved_rom_is_enforced(self) -> None:
+        import hashlib
+        from unittest import mock
+        from b2er import pipeline
+        from b2er.assembly import BuildError
+        from b2er.gamedata import zones
+        self.assertEqual(zones.PROVEN_ROUTE19["3e50aec3db401332175a5d2b5fe2a68ac1a05ec63995dba9d1506b1b51837446"], (437, 128))
+        digest = hashlib.sha256(self.white.read_bytes()).hexdigest()
+        req = self.request()
+        with mock.patch.dict(zones.PROVEN_ROUTE19, {digest: (437, 128)}):
+            with self.assertRaises(BuildError) as ctx:
+                pipeline.run(req)
+        self.assertIn("proven mapping is (437, 128)", str(ctx.exception))
+
+
+class ZoneTableTests(unittest.TestCase):
+    def test_mask_none_and_one_to_one(self) -> None:
+        import synthetic_w2u as sw
+        from b2er.gamedata import zones
+        from b2er.nds import FormatError
+        table = sw.synthetic_zone_table()
+        self.assertEqual(zones.resolve(table, 5), 2)
+        indices = zones.encounter_indices(table)
+        self.assertEqual(indices[437], 2)
+        self.assertIsNone(indices[0])  # 0xDFFF (flags | 0x1FFF) is "no encounters"
+        self.assertEqual(indices[12], 3)  # 0xC000 flags are masked off
+        for records in ({10: 0, 11: 1, 437: 2, 12: 2, 13: 4}, {10: 0, 437: 2}, {10: 0, 11: 1, 437: 2, 12: 3, 13: 9}):
+            with self.assertRaises(FormatError):
+                zones.resolve(sw.synthetic_zone_table(records), 5)
+        with self.assertRaises(FormatError):
+            zones.resolve(sw.synthetic_zone_table({10: 0, 11: 1, 12: 2, 13: 3, 14: 4}), 5)  # zone 437 has none
+        with self.assertRaises(FormatError):
+            zones.zone_table(Narc([b"\x00" * 0x31]).build())
+
+    def test_fixture_season_count_follows_the_mapped_record(self) -> None:
+        one = enc.encode_record([enc.Container((1,) * 8, {(c, k): (enc.fixture_grass_slots() if (c, k) == ("GRASS", "SINGLES")
+                                                                    else [enc.Slot(504, 0, 5, 5)] * n) for c, k, n in enc.TABLES})])
+        self.assertEqual(enc.verify_route19_fixture(one, 1), [])
+        self.assertTrue(enc.verify_route19_fixture(one, 4))
+        self.assertTrue(enc.verify_route19_fixture(one * 4, 1))
+
+
+class _null:
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *exc):
+        return False
+
+
+class WildSetupProbeTests(unittest.TestCase):
+    def test_probe_brackets_the_w2u_hook(self) -> None:
+        from b2er import emulator
+        script = emulator.wild_setup_probe()
+        self.assertEqual((emulator.WILD_SETUP_HOOK, emulator.WILD_SETUP_AFTER), (0x0201809A, 0x0201809E))
+        self.assertIn("break *0x0201809a", script)
+        self.assertIn("break *0x0201809e", script)
+        self.assertIn("x/8hx *(unsigned int*)($r4+0x34)", script)
+        self.assertTrue(script.rstrip().endswith("quit"))
+
+
+if __name__ == "__main__":
+    unittest.main()

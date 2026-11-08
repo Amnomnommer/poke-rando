@@ -315,6 +315,21 @@ def item_add(item: int, amount: int = 1) -> bytes:
     return struct.pack("<4H", 0xB5, item, amount, 0x8000)
 
 
+SYNTHETIC_ZONE_RECORDS = {10: 0, 11: 1, 437: 2, 12: 3, 13: 4}  # zone -> encounter record; zone 437 is Route 19
+
+
+def synthetic_zone_table(records: dict[int, int] = SYNTHETIC_ZONE_RECORDS, zones: int = 440) -> bytes:
+    """Generated 0x30-byte zone headers: u16@0x14 low 13 bits = encounter record, 0x1FFF = none; upper bits are flags."""
+    table = bytearray()
+    for zone in range(zones):
+        entry = bytearray(0x30)
+        value = records.get(zone, 0x1FFF) | (0xC000 if zone % 3 == 0 else 0)
+        struct.pack_into("<H", entry, 0x14, value)
+        struct.pack_into("<H", entry, 0x18, zone)  # an unrelated field
+        table += entry
+    return Narc([bytes(table)]).build()
+
+
 def make_roms(directory: Path) -> tuple[Path, Path]:
     members = [script([item_add(17)]) for _ in range(60)]
     members[10] = script([poke_add(495, 5), poke_add(498, 5), poke_add(501, 5)])
@@ -322,7 +337,8 @@ def make_roms(directory: Path) -> tuple[Path, Path]:
     members[12] = script([poke_add(40, 10)])
     members[13] = script([struct.pack("<3H", 0x200, 380, 50)])
     scripts_narc = Narc(members).build()
-    files = {"a/0/5/6": scripts_narc, "a/1/2/7": Narc([b""]).build(), "a/0/9/1": Narc([b""]).build(),
+    files = {"a/0/5/6": scripts_narc, "a/1/2/7": Narc([b"", b"", bytes(928), b"", b""]).build(),
+             "a/0/1/2": synthetic_zone_table(), "a/0/9/1": Narc([b""]).build(),
              "a/0/9/2": Narc([b""]).build(), "a/0/1/6": Narc([b"synthetic"]).build()}
     white = build_rom(game_code=b"IRDO", arm9=arm9.synthetic_arm9(), files=files, overlays=[(0, b"synthetic overlay 0", False)],
                       dsi={"arm9i": SYNTHETIC_ARM9I, "arm7i": SYNTHETIC_ARM7I})

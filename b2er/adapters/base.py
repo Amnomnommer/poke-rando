@@ -67,7 +67,7 @@ class GameAdapter(ABC):
         """Capabilities that depend on discovered data (e.g. script sites). Defaults to the static set."""
         return self.capabilities()
 
-    def resolve_diagnostic_area(self, model: GameModel) -> tuple[int, dict]:
+    def resolve_diagnostic_area(self, model: GameModel, ctx=None) -> tuple[int, dict]:
         raise NotImplementedError
 
     @abstractmethod

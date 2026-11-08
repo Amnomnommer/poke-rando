@@ -15,7 +15,7 @@ from ...assembly import BuildError, builders, ctrmap_dsi, narc_premerge, patches
 from ...assembly.builders import encode_encounter_document, trainer_labels
 from ...gamedata import trainer_codec
 from ...capabilities import Capability as C, Level, Support, unsupported
-from ...gamedata import encounters as enc, trainers as trn
+from ...gamedata import encounters as enc, trainers as trn, zones
 from ...model import BattleFormat, GameModel, SpeciesKey
 from ...nds import FormatError, arm9 as arm9_tools, dsi
 from ...nds.narc import Narc, read_members
@@ -26,7 +26,6 @@ from .common import Gen5Adapter
 from .w2u_model import FORMAT_CODES, to_model, write_model
 
 ENCOUNTER_ARCHIVE, TRDATA_ARCHIVE, TRPOKE_ARCHIVE = "a/1/2/7", "a/0/9/1", "a/0/9/2"
-ROUTE19_SIGNATURE = {SpeciesKey(504), SpeciesKey(509), SpeciesKey(519)}  # Patrat, Purrloin, Pidove
 
 
 class White2Adapter(Gen5Adapter):
@@ -169,28 +168,26 @@ class White2Adapter(Gen5Adapter):
             caps[C.FIELD_ITEMS] = unsupported("no shuffle-eligible ItemAdd sites decoded")
         return caps
 
-    def resolve_diagnostic_area(self, model: GameModel) -> tuple[int, dict]:
-        # Runtime evidence (melonDS, diagnostic ROM ee123785...): Route 19 showed W2U's own record 128 (all
-        # Gible L100) while this species-signature heuristic had selected record 129. The game picks records
-        # through the zone header table, whose layout is not yet proven here, so the mode is refused instead
-        # of producing a fixture the verifier would check in the wrong record.
-        raise BuildError("REFUSED: diagnostic Route 19 mode is disabled: the zone -> encounter mapping is unproven "
-                         "(the signature heuristic selected record 129; the game loaded W2U record 128 on Route 19). "
-                         "Run `./b2er.sh diagnose-resources CLEAN.nds REBUILT.nds --output report.json` and return the JSON.")
-
-    def _signature_area_unused(self, model: GameModel) -> tuple[int, dict]:  # kept for the record; never called
-        matches = []
-        for area in model.encounters:
-            if len(area.seasons) != enc.SEASONS:
-                continue
-            grass = [s for season in area.seasons for t in season if t.kind == "grass" for s in t.slots]
-            species = {s.species for s in grass if s.species}
-            if ROUTE19_SIGNATURE <= species and all(s.species and s.max_level <= 5 for s in grass):
-                matches.append(area.id)
-        if len(matches) != 1:
-            raise BuildError(f"Route 19 must match exactly one encounter area by evidence; matched {matches}")
-        return matches[0], {"rule": "unique four-season area whose grass has Patrat, Purrloin and Pidove at levels <= 5",
-                            "area": matches[0]}
+    def resolve_diagnostic_area(self, model: GameModel, ctx=None) -> tuple[int, dict]:
+        """Route 19's record through the clean ROM's zone header table (b2er/gamedata/zones.py has the proof)."""
+        if ctx is None:
+            raise BuildError("Route 19 must be resolved from the clean ROM's zone table")
+        clean_bytes = Path(ctx.rom).read_bytes()
+        clean = Rom(clean_bytes)
+        records = len(read_members(clean.read_path(ENCOUNTER_ARCHIVE)))
+        try:
+            member = zones.resolve(clean.read_path(zones.ZONE_ARCHIVE), records)
+        except FormatError as error:
+            raise BuildError(f"Route 19 zone mapping unavailable: {error}") from None
+        digest = hashlib.sha256(clean_bytes).hexdigest()
+        proven = zones.PROVEN_ROUTE19.get(digest)
+        if proven and proven != (zones.ROUTE19_ZONE, member):
+            raise BuildError(f"zone {zones.ROUTE19_ZONE} maps to record {member}, but the proven mapping is {proven}")
+        if member not in {a.id for a in model.encounters}:
+            raise BuildError(f"Route 19 record {member} is not in the W2U encounter sources")
+        return member, {"rule": f"clean zone table {zones.ZONE_ARCHIVE}: zone {zones.ROUTE19_ZONE} u16@0x{zones.ENCOUNTER_FIELD:x} "
+                                f"& 0x{zones.ENCOUNTER_MASK:x}", "zone": zones.ROUTE19_ZONE, "area": member,
+                        "proven_for_clean_rom": bool(proven)}
 
     # --- apply, rebuild, postprocess ------------------------------------------------------
     def apply(self, ctx, model, plan) -> dict:
@@ -291,10 +288,19 @@ class White2Adapter(Gen5Adapter):
                               if s.species and not 1 <= s.min_level <= s.max_level <= 100]
             check("encounter_levels_valid", not level_problems, f"{len(level_problems)} invalid level ranges")
             if ctx.settings["mode"] == "diagnostic-route19":
-                area = plan["diagnostic"]["area"]
-                fixture = enc.verify_route19_fixture(narc.members[area])
+                # Independent of the writer: resolve Route 19 through the rebuilt ROM's own zone table and
+                # verify the record the game will load, then require it to be the record that was patched.
+                clean_rom = Rom(Path(ctx.rom).read_bytes())
+                mapped = zones.resolve(rom.read_path(zones.ZONE_ARCHIVE), len(narc.members))
+                clean_mapped = zones.resolve(clean_rom.read_path(zones.ZONE_ARCHIVE), len(narc.members))
+                seasons = len(read_members(clean_rom.read_path(ENCOUNTER_ARCHIVE))[clean_mapped]) // enc.CONTAINER_SIZE
+                check("route19_runtime_mapping", mapped == plan["diagnostic"]["area"] == clean_mapped,
+                      f"zone {zones.ROUTE19_ZONE} -> record {mapped} in the rebuilt ROM (clean ROM: {clean_mapped}); "
+                      f"patched record {plan['diagnostic']['area']}")
+                fixture = enc.verify_route19_fixture(narc.members[mapped], seasons)
                 check("route19_fixture", not fixture,
-                      "4 seasons x 12 grass slots, 928 bytes, exact species/form/levels, 35/35/30" if not fixture else "; ".join(fixture[:4]))
+                      f"record {mapped}: {seasons} season(s) x 12 grass slots, exact species/form/levels, 35/35/30"
+                      if not fixture else "; ".join(fixture[:4]))
         except FormatError as error:
             check("encounters_decodable", False, str(error))
         try:
@@ -324,13 +330,18 @@ class White2Adapter(Gen5Adapter):
             problems = site_tools.verify_patches(rom, post["script_patches"])
             check("script_patches_present", not problems, f"{len(post['script_patches'])} patches; {problems[:3]}")
         try:  # the game resolves archives by numeric FAT file ID: the verified paths must keep the clean IDs
+            # The game resolves archives by NitroFS path (all 318 numeric IDs shift by +5 in a W2U build and
+            # the game still runs), so identity means: same path, and every zone keeps its encounter record.
             clean_rom = Rom(Path(ctx.rom).read_bytes())
-            moved = [f"{p}: clean ID {clean_rom.file_id(p)}, rebuilt ID {rom.file_id(p)}"
-                     for p in (ENCOUNTER_ARCHIVE, TRDATA_ARCHIVE, TRPOKE_ARCHIVE) if clean_rom.file_id(p) != rom.file_id(p)]
-            check("runtime_archive_identity", not moved,
-                  "encounter/trainer archives keep their clean numeric file IDs" if not moved else "; ".join(moved))
+            before = zones.encounter_indices(clean_rom.read_path(zones.ZONE_ARCHIVE))
+            after = zones.encounter_indices(rom.read_path(zones.ZONE_ARCHIVE))
+            changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
+            ok = len(before) == len(after) and not changed
+            check("zone_encounter_mapping_preserved", ok,
+                  f"{sum(i is not None for i in after)} zones keep their encounter records" if ok
+                  else f"{len(changed)} zones changed records (first {changed[:5]}); tables {len(before)}/{len(after)}")
         except FormatError as error:
-            check("runtime_archive_identity", False, str(error))
+            check("zone_encounter_mapping_preserved", False, str(error))
         merge_report = ctx.state["w2u"] / patches.NARC_PREMERGE_WORK / narc_premerge.REPORT
         if ctx.options.get("builder", "w2u") == "mock" and not merge_report.exists():
             check("narc_extents_exact", True, "mock builder: no CTRMap .arc overlays merged")
