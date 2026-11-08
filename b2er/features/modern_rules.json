@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "target": "generation_9",
+  "release": "1.0",
+  "domains": [
+    "species_1_1025",
+    "fairy_type",
+    "current_type_chart",
+    "physical_special_split",
+    "current_status",
+    "modern_weather",
+    "modern_terrain",
+    "modern_moves",
+    "modern_abilities",
+    "modern_items",
+    "modern_evolutions",
+    "modern_learnsets",
+    "modern_compatibility",
+    "modern_experience"
+  ],
+  "acceptance": {
+    "required_state": ["native", "implemented"],
+    "adapter_verified": true,
+    "runtime_tested": true,
+    "no_silent_downgrade": true
+  }
+}
