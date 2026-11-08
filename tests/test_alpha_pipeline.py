@@ -121,16 +121,9 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual((a["build_key"], a["sha256"]), (b["build_key"], b["sha256"]))
         self.assertNotEqual(a["sha256"], c["sha256"])
 
-    def test_diagnostic_build(self) -> None:
-        req = self.request("diag", diagnostic=True)
-        result = pipeline.run(req)
-        checks = {c["name"]: c for c in result["verification"]["checks"]}
-        self.assertEqual(checks["route19_fixture"]["status"], "pass")
-        rom = Rom((req.output_dir / result["outputs"]["rom"]).read_bytes())
-        record = Narc.parse(rom.read_path("a/1/2/7")).members[2]
-        self.assertEqual(enc.verify_route19_fixture(record), [])
-        self.assertEqual({m[2] for m in Narc.parse(rom.read_path("a/0/9/1")).members}, {0})
-        self.assertIn("diagnostic", result["label"])
+    def test_diagnostic_build_refused_until_zone_mapping_is_proven(self) -> None:
+        # Runtime evidence: the signature heuristic picked the wrong record; no fixture may be emitted.
+        self.assertRefused("zone -> encounter mapping is unproven", diagnostic=True)
 
     def test_full_species_range_refused_without_modification(self) -> None:
         self.assertRefused("national_dex_max=1025", species_max=None)
